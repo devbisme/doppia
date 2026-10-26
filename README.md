@@ -13,17 +13,38 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 ## Features
 
 - Account list with today's balance, cleared balance, net worth. Future-dated rows shown grey.
-- Register per account or all accounts: running balance, text filter, uncleared-only filter.
-- New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K or double-click Clr to toggle cleared.
+- Money is shown as `$1,234.56`: red for negative, green for positive, no minus sign
+  (the minus is kept only in plain-text messages that can't be colored). Colors stay
+  visible on selected rows. `$` and commas are accepted when typing amounts.
+- Register per account or all accounts: running balance, text filter (matches `$3,000`
+  or `3000`), uncleared-only filter.
+  - Click a column header to sort by it; click again to reverse. The sort column's header
+    is highlighted, and the selection is kept when re-sorting. The register opens sorted by
+    date, newest first. The Balance column is a date-order running balance, so it only
+    adds up when sorted by date.
+  - Click the Clr box to toggle cleared; cleared rows show a green ✔ (the CSV still stores `X`).
+  - Double-click a row to edit it; right-click for a menu to delete it.
+- New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared.
   Payee memory: typing a known description fills its last category and amount.
 - Transfers use CountAbout's `{Account}` category; the mirror row in the other account
   is created/updated/deleted automatically (matched by date and negated amount).
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
   `~/.config/vibeacct/import_profiles.json`; payee/category matched from history;
   duplicates (same amount within 3 days) unchecked by default; imported rows marked cleared.
-- Reconcile (Ctrl+R) against a statement ending balance.
+- Reconcile (Ctrl+R) against a statement ending balance: check off uncleared
+  transactions until the difference is $0.00.
 - Reports (Ctrl+P): totals by category, category by month, income vs. expense by month.
+  Transfers are excluded. Click a column header to sort.
+  - **All accounts on/off** checks or unchecks every account in the account list.
+  - **Categories** field: a case-insensitive regular expression matched anywhere in the
+    category name (e.g. `^(groceries|dining)$`). Press Enter or Run to apply; the X button
+    clears it and reruns. An invalid expression is reported and ignored.
+  - Ctrl/Shift-click category rows, then Run, to report only those categories. The
+    restriction persists across runs until **Show all categories** clears it (along with
+    the regex). Run uses whatever rows are highlighted when pressed.
+  - Total income, expense, and net rows reflect only the categories shown.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
+- Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.1 s to switch accounts.
 
 ## Limitations (from the CountAbout format)
 
