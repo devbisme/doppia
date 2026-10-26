@@ -8,6 +8,7 @@ if it contains a space, comma, double quote, or newline.
 
 import csv
 import datetime as dt
+import functools
 import os
 import shutil
 from dataclasses import dataclass, field, fields
@@ -29,6 +30,12 @@ COLUMNS = [
 DATE_FMT = "%m-%d-%Y"
 SPLIT_CATEGORY = "{SPLIT}"
 OPENING_DESCRIPTION = "Beginning Balance"
+
+
+@functools.lru_cache(maxsize=None)
+def parse_date(text):
+    """Parse an MM-DD-YYYY date. Memoized: strptime is slow and dates repeat heavily."""
+    return dt.datetime.strptime(text, DATE_FMT).date()
 
 
 def _quote(text):
@@ -80,7 +87,7 @@ class Transaction:
 
     @property
     def date(self):
-        return dt.datetime.strptime(self.date_str, DATE_FMT).date()
+        return parse_date(self.date_str)
 
     @date.setter
     def date(self, value):
@@ -168,6 +175,21 @@ class Ledger:
 
     def for_account(self, account):
         return [t for t in self.transactions if t.account == account]
+
+    def account_balances(self, as_of=None):
+        """{account: (balance, cleared balance)} in one pass over the ledger.
+        `as_of` limits the balance (not the cleared balance) to rows on or before that date."""
+        out = {}
+        zero = Decimal("0")
+        for t in self.transactions:
+            bal, clr = out.get(t.account, (zero, zero))
+            amt = t.amount
+            if as_of is None or t.date <= as_of:
+                bal += amt
+            if t.is_cleared:
+                clr += amt
+            out[t.account] = (bal, clr)
+        return out
 
     def balance(self, account, as_of=None, cleared_only=False):
         total = Decimal("0")

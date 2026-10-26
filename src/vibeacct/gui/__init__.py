@@ -221,18 +221,17 @@ class MainWindow(QMainWindow):
         """Rebuild the account list, keeping the current selection."""
         self.tree.blockSignals(True)
         self.tree.clear()
-        today = dt.date.today()
+        balances = self.ledger.account_balances(as_of=dt.date.today()) if self.ledger else {}
         total = Decimal("0")
         sel = None
-        for name in [ALL_ACCOUNTS] + (self.ledger.accounts() if self.ledger else []):
+        for name in [ALL_ACCOUNTS] + sorted(balances, key=str.lower):
             if name == ALL_ACCOUNTS:
                 item = QTreeWidgetItem([name, "", ""])
                 f = item.font(0)
                 f.setBold(True)
                 item.setFont(0, f)
             else:
-                bal = self.ledger.balance(name, as_of=today)
-                clr = self.ledger.balance(name, cleared_only=True)
+                bal, clr = balances[name]
                 total += bal
                 item = QTreeWidgetItem([name, money(bal), money(clr)])
                 for c, v in ((1, bal), (2, clr)):

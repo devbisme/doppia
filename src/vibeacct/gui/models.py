@@ -15,7 +15,6 @@ SELECTION_COLOR = QColor(200, 222, 250)  # light enough for red/green text to st
 CLEARED_MARK = "✔"  # display only; the CSV still stores CountAbout's "X"
 SORT_HEADER_BG = QBrush(QColor(200, 220, 245))
 SORT_HEADER_FG = QBrush(QColor(20, 50, 120))
-SORT_ROLE = Qt.UserRole + 1
 
 
 class KeepColorDelegate(QStyledItemDelegate):
@@ -73,6 +72,7 @@ class RegisterModel(QAbstractTableModel):
         self.account = account
         self.rows = []
         self.balances = []
+        self.sort_column, self.sort_order = self.C_DATE, Qt.DescendingOrder
         self.refresh()
 
     def set_ledger(self, ledger):
@@ -85,22 +85,64 @@ class RegisterModel(QAbstractTableModel):
 
     def refresh(self):
         self.beginResetModel()
+        self.today = dt.date.today()
         if self.ledger is None:
-            self.rows = []
+            rows = []
         elif self.account is None:
-            self.rows = list(self.ledger.transactions)
+            rows = list(self.ledger.transactions)
         else:
-            self.rows = self.ledger.for_account(self.account)
+            rows = self.ledger.for_account(self.account)
         # Ledger order is newest first; within a date the file lists later entries first.
         # Running balance accumulates in chronological order, i.e. reversed list order.
-        self.rows.sort(key=lambda t: t.date, reverse=True)  # stable: preserves within-date order
+        rows.sort(key=lambda t: t.date, reverse=True)  # stable: preserves within-date order
         bal = Decimal("0")
         balances = []
-        for t in reversed(self.rows):
+        for t in reversed(rows):
             bal += t.amount
             balances.append(bal)
-        self.balances = balances[::-1]
+        self.rows, self.balances = rows, balances[::-1]
+        self._sort_rows()
         self.endResetModel()
+
+    def _sort_key(self, column):
+        """Key function on row number. Computed once per row per sort, which matters at 10k+ rows:
+        letting QSortFilterProxyModel sort would call data() on every comparison."""
+        rows, bals = self.rows, self.balances
+        if column == self.C_DATE:
+            return lambda i: rows[i].date
+        if column == self.C_AMOUNT:
+            return lambda i: rows[i].amount
+        if column == self.C_BAL:
+            return lambda i: bals[i]
+        if column == self.C_CLR:
+            return lambda i: rows[i].is_cleared
+        attr = {
+            self.C_ACCOUNT: "account",
+            self.C_REF: "ref",
+            self.C_DESC: "description",
+            self.C_CAT: "category",
+            self.C_MEMO: "memo",
+        }[column]
+        return lambda i: getattr(rows[i], attr).lower()
+
+    def _sort_rows(self):
+        # Stable in both directions, so ties keep the previous order (e.g. newest-first within a date).
+        order = sorted(
+            range(len(self.rows)), key=self._sort_key(self.sort_column), reverse=self.sort_order == Qt.DescendingOrder
+        )
+        self.rows = [self.rows[i] for i in order]
+        self.balances = [self.balances[i] for i in order]
+
+    def sort(self, column, order=Qt.AscendingOrder):
+        """Sort in place, keeping selections and the current row attached to their transactions."""
+        self.layoutAboutToBeChanged.emit()
+        old = self.persistentIndexList()
+        txns = [self.rows[i.row()] for i in old]
+        self.sort_column, self.sort_order = column, order
+        self._sort_rows()
+        pos = {id(t): r for r, t in enumerate(self.rows)}
+        self.changePersistentIndexList(old, [self.index(pos[id(t)], i.column()) for t, i in zip(txns, old)])
+        self.layoutChanged.emit()
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
@@ -140,14 +182,6 @@ class RegisterModel(QAbstractTableModel):
                 self.C_CLR: CLEARED_MARK if t.is_cleared else "",
                 self.C_BAL: money(self.balances[index.row()]),
             }[c]
-        if role == SORT_ROLE:
-            if c == self.C_DATE:
-                return t.date.isoformat()
-            if c == self.C_AMOUNT:
-                return float(t.amount)
-            if c == self.C_BAL:
-                return float(self.balances[index.row()])
-            return self.data(index, Qt.DisplayRole).lower()
         if role == Qt.ForegroundRole:
             if c == self.C_AMOUNT and t.amount:
                 return money_color(t.amount)
@@ -155,7 +189,7 @@ class RegisterModel(QAbstractTableModel):
                 return money_color(self.balances[index.row()])
             if c == self.C_CLR:
                 return CLEARED_COLOR
-            if t.date > dt.date.today():
+            if t.date > self.today:
                 return FUTURE_COLOR
         if role == Qt.TextAlignmentRole and c in (self.C_AMOUNT, self.C_BAL):
             return int(Qt.AlignRight | Qt.AlignVCenter)
@@ -167,21 +201,22 @@ class RegisterModel(QAbstractTableModel):
 
 
 class RegisterFilter(QSortFilterProxyModel):
-    """Case-insensitive text filter across description, category, memo, ref, and amount."""
+    """Case-insensitive text filter across description, category, memo, ref, and amount.
+    Sorting is done by RegisterModel; this proxy only filters."""
 
     def __init__(self):
         super().__init__()
         self.text = ""
         self.uncleared_only = False
-        self.setSortRole(SORT_ROLE)
 
     def sort(self, column, order=Qt.AscendingOrder):
-        super().sort(column, order)
+        """Delegate sorting to the source model (much faster than the proxy's comparison sort)."""
+        self.sourceModel().sort(column, order)
         self.headerDataChanged.emit(Qt.Horizontal, 0, self.columnCount() - 1)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         """Highlight the header of the column currently used for sorting."""
-        if orientation == Qt.Horizontal and section == self.sortColumn():
+        if orientation == Qt.Horizontal and section == self.sourceModel().sort_column:
             if role == Qt.FontRole:
                 f = QFont()
                 f.setBold(True)

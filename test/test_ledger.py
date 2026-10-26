@@ -101,3 +101,10 @@ def test_import_categorizes_and_dedups(ledger):
     assert cands[1].txn.amount == Decimal("-20.00")
     assert cands[2].error
     assert apply_candidates(ledger, cands) == 1
+
+
+def test_account_balances_matches_balance(ledger):
+    today = dt.date(2026, 10, 26)
+    for acct, (bal, clr) in ledger.account_balances(as_of=today).items():
+        assert bal == ledger.balance(acct, as_of=today)
+        assert clr == ledger.balance(acct, cleared_only=True)
