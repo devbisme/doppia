@@ -5,13 +5,14 @@ import os
 import sys
 from decimal import Decimal
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QFileDialog,
+    QFontDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -50,6 +51,9 @@ class MainWindow(QMainWindow):
         self.tree.setRootIsDecorated(False)
         self.tree.itemSelectionChanged.connect(self.account_selected)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.header().setStretchLastSection(False)
+        for col in (1, 2):
+            self.tree.header().setSectionResizeMode(col, QHeaderView.ResizeToContents)
 
         # Register.
         self.model = RegisterModel(None)
@@ -61,7 +65,6 @@ class MainWindow(QMainWindow):
         self.view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.view.verticalHeader().hide()
-        self.view.verticalHeader().setDefaultSectionSize(22)
         self.view.clicked.connect(self.on_click)
         self.view.doubleClicked.connect(self.on_double_click)
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -71,8 +74,6 @@ class MainWindow(QMainWindow):
         # Header clicks sort; clicking the same header again reverses the order.
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(RegisterModel.C_DATE, Qt.DescendingOrder)
-        for col, w in zip(range(len(RegisterModel.COLS)), (90, 130, 60, 220, 170, 240, 95, 35, 105)):
-            self.view.setColumnWidth(col, w)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter (all words must match)…")
@@ -80,7 +81,6 @@ class MainWindow(QMainWindow):
         self.uncleared = QCheckBox("Uncleared only")
         self.uncleared.toggled.connect(self.proxy.set_uncleared_only)
         self.title = QLabel()
-        self.title.setStyleSheet("font-weight: bold; font-size: 14px;")
         btns = []
         for text, slot in (("New", self.new_txn), ("Edit", self.edit_txn), ("Delete", self.delete_txn)):
             b = QPushButton(text)
@@ -100,13 +100,17 @@ class MainWindow(QMainWindow):
         rl.addLayout(bar)
         rl.addWidget(self.view)
 
-        split = QSplitter()
-        split.addWidget(self.tree)
-        split.addWidget(right)
-        split.setSizes([330, 1100])
-        self.setCentralWidget(split)
+        self.split = QSplitter()
+        self.split.addWidget(self.tree)
+        self.split.addWidget(right)
+        self.split.setSizes([330, 1100])
+        self.setCentralWidget(self.split)
         self.build_menus()
         self.resize(1450, 850)
+
+        self.default_font = QFont(QApplication.font())
+        saved, desc = QFont(), self.settings.value("font")
+        self.apply_font(saved if desc and saved.fromString(desc) else self.default_font)
 
         path = path or self.settings.value("last_file")
         if path and os.path.exists(path):
@@ -148,6 +152,59 @@ class MainWindow(QMainWindow):
         act(m, "&Reports…", self.reports, "Ctrl+P")
         act(m, "Rename &category…", self.rename_category)
 
+        m = self.menuBar().addMenu("&View")
+        act(m, "&Font…", self.choose_font)
+        act(m, "&Reset font", self.reset_font)
+
+    # ------------------------------------------------------------------ font
+
+    # Register column widths in units of the font's average character width.
+    REGISTER_COL_CHARS = (13, 18, 8, 30, 23, 33, 13, 5, 14)
+
+    def choose_font(self):
+        ok, font = QFontDialog.getFont(QApplication.font(), self, "Font")
+        if ok:
+            self.apply_font(font)
+            self.settings.setValue("font", font.toString())
+
+    def reset_font(self):
+        self.apply_font(self.default_font)
+        self.settings.remove("font")
+
+    def apply_font(self, font):
+        """Set the font for the whole app (including dialogs opened later) and resize
+        everything that was sized in pixels."""
+        QApplication.setFont(font)
+        fm = QFontMetrics(font)
+        self.view.verticalHeader().setDefaultSectionSize(fm.height() + 6)
+        for col, chars in enumerate(self.REGISTER_COL_CHARS):
+            self.view.setColumnWidth(col, chars * fm.averageCharWidth())
+        title_font = QFont(font)
+        title_font.setBold(True)
+        if font.pointSizeF() > 0:
+            title_font.setPointSizeF(font.pointSizeF() * 1.25)
+        else:  # font sized in pixels
+            title_font.setPixelSize(round(font.pixelSize() * 1.25))
+        self.title.setFont(title_font)
+        # Rebuild the account list: its bold/italic rows copied the old font when created.
+        self.refresh_accounts(reset_register=False)
+        # The new font reaches widgets via events; measure after they've been processed.
+        QTimer.singleShot(0, self.fit_account_list)
+
+    def fit_account_list(self):
+        """Widen the account pane so names and balances fit (only on font change or file open,
+        so a manually dragged splitter isn't undone by every edit)."""
+        t = self.tree
+        need = (
+            sum(t.sizeHintForColumn(c) for c in range(t.columnCount()))
+            + t.verticalScrollBar().sizeHint().width()
+            + 2 * t.frameWidth()
+            + 12
+        )
+        total = sum(self.split.sizes())
+        need = min(need, total // 2)
+        self.split.setSizes([need, total - need])
+
     # ------------------------------------------------------------------ file
 
     def open_path(self, path):
@@ -161,6 +218,7 @@ class MainWindow(QMainWindow):
         self.model.set_ledger(ledger)
         self.account = None
         self.refresh_accounts()
+        self.fit_account_list()
 
     def maybe_save(self):
         if self.ledger is None or not self.ledger.dirty:
@@ -250,8 +308,6 @@ class MainWindow(QMainWindow):
         f.setItalic(True)
         net.setFont(0, f)
         self.tree.addTopLevelItem(net)
-        self.tree.resizeColumnToContents(1)
-        self.tree.resizeColumnToContents(2)
         if sel:
             self.tree.setCurrentItem(sel)
         self.tree.blockSignals(False)

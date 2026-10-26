@@ -558,9 +558,16 @@ class ReportDialog(QDialog):
             item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             item.setCheckState(Qt.Checked)
             self.accounts.addItem(item)
-        self.accounts.setMaximumWidth(220)
+        # Fit the widest account name (scales with the chosen font).
+        acct_width = (
+            self.accounts.sizeHintForColumn(0)
+            + self.accounts.verticalScrollBar().sizeHint().width()
+            + 2 * self.accounts.frameWidth()
+            + 8
+        )
+        self.accounts.setFixedWidth(acct_width)
         toggle_all = QPushButton("All accounts on/off")
-        toggle_all.setMaximumWidth(220)
+        toggle_all.setMaximumWidth(acct_width)
         toggle_all.clicked.connect(self.toggle_accounts)
         self.cat_regex = QLineEdit()
         self.cat_regex.setPlaceholderText("all categories")

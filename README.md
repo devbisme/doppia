@@ -43,6 +43,8 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
     restriction persists across runs until **Show all categories** clears it (along with
     the regex). Run uses whatever rows are highlighted when pressed.
   - Total income, expense, and net rows reflect only the categories shown.
+- View → Font… sets the font family, style (regular/italic/bold), and size for the whole
+  app; the choice is remembered. View → Reset font returns to the system default.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
 - Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.1 s to switch accounts.
 
