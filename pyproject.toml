@@ -21,6 +21,12 @@ classifiers = [
 ]
 dependencies = ["PySide6>=6.6"]
 
+[project.urls]
+Homepage = "https://github.com/devbisme/doppia"
+Source = "https://github.com/devbisme/doppia"
+Issues = "https://github.com/devbisme/doppia/issues"
+Releases = "https://github.com/devbisme/doppia/releases"
+
 [project.optional-dependencies]
 test = ["pytest"]
 

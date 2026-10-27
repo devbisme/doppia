@@ -124,4 +124,4 @@ with the dependencies it needs:
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+MIT; see [LICENSE](https://github.com/devbisme/doppia/blob/master/LICENSE).
