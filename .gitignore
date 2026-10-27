@@ -5,3 +5,4 @@ __pycache__/
 *.csv.tmp
 countabout-export*.csv
 dist/
+claude_transcript.txt
