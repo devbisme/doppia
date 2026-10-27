@@ -12,12 +12,17 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 
 ## Features
 
-- Account list with today's balance, cleared balance, net worth. Future-dated rows shown grey.
+- Account list with today's balance and cleared balance. The bold **Total** row sums both
+  columns over the selected accounts (all accounts when none or "All accounts" is selected).
+  Future-dated rows shown grey.
 - Money is shown as `$1,234.56`: red for negative, green for positive, no minus sign
   (the minus is kept only in plain-text messages that can't be colored). Colors stay
   visible on selected rows. `$` and commas are accepted when typing amounts.
-- Register per account or all accounts: running balance, text filter (matches `$3,000`
-  or `3000`), uncleared-only filter.
+- Register per account or all accounts: running balance, uncleared-only filter, and a
+  filter field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
+  `\$3,000`) matched in the description, category, memo, ref, date, or amount. Its X button
+  clears it; an invalid expression tints the field and is ignored. The account names over
+  the register are cut to 30 characters, including `...` (hover for the full list).
   - Ctrl/Shift-click in the account list to select several accounts; the register shows their
     combined transactions with a combined running balance. Reconcile and Rename account need
     a single account selected.
@@ -29,6 +34,13 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
   - Double-click a row to edit it; right-click for a menu to delete it.
 - New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared.
   Payee memory: typing a known description fills its last category and amount.
+- Search and replace (Transaction menu, Ctrl+H): find a regular expression in the
+  Description, Category, Memo, Ref, and/or Tags fields (optionally case-sensitive, optionally
+  only in the selected accounts). Check **Replace with** to preview each change (`\1` inserts a
+  matched group), untick any you don't want (**Select All/None** flips them all), then
+  **Replace checked**. Transfer/split
+  categories and results containing line breaks can't be replaced. Nothing is written to the
+  file until you save.
 - Transfers use CountAbout's `{Account}` category; the mirror row in the other account
   is created/updated/deleted automatically (matched by date and negated amount).
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
@@ -41,7 +53,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
   - Transfers are excluded unless **Include transfers** is checked. Then each transfer is
     reported under `Transfer: <other account>`. A transfer between two checked accounts appears
     on both sides, so it adds to both income and expense while netting to zero.
-  - **All accounts on/off** checks or unchecks every account in the account list.
+  - **Accounts All/None** checks or unchecks every account in the account list.
   - **Categories** field: a case-insensitive regular expression matched anywhere in the
     category name (e.g. `^(groceries|dining)$`). Press Enter or Run to apply; the X button
     clears it and reruns. An invalid expression is reported and ignored.

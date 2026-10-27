@@ -31,10 +31,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..ledger import Ledger
-from .dialogs import ImportDialog, ReconcileDialog, ReportDialog, TransactionDialog, parse_amount
+from .dialogs import ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
 from .models import RegisterFilter, RegisterModel, keep_colors_when_selected, money, money_color
 
 ALL_ACCOUNTS = "All accounts"
+TITLE_MAX = 30  # longest account list shown over the register, including the "..."
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = QSettings("vibeacct", "vibeacct")
         self.ledger = None
+        self.balances = {}  # {account: (balance as of today, cleared balance)}
         self.accounts = []  # selected account names; empty means all accounts
 
         # Account list: name, balance as of today, cleared balance.
@@ -78,8 +80,14 @@ class MainWindow(QMainWindow):
         self.view.sortByColumn(RegisterModel.C_DATE, Qt.DescendingOrder)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Filter (all words must match)…")
-        self.search.textChanged.connect(self.proxy.set_text)
+        self.search.setPlaceholderText("Filter (regular expression)…")
+        self.filter_help = (
+            "Case-insensitive Python regular expression, matched in the description, category,\n"
+            "memo, ref, date, or amount. Escape special characters, e.g. \\$3,000 or 12\\.50"
+        )
+        self.search.setToolTip(self.filter_help)
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.filter_changed)
         self.uncleared = QCheckBox("Uncleared only")
         self.uncleared.toggled.connect(self.proxy.set_uncleared_only)
         self.title = QLabel()
@@ -144,6 +152,8 @@ class MainWindow(QMainWindow):
         act(m, "&Edit", self.edit_txn, "Ctrl+E")
         act(m, "&Delete", self.delete_txn, "Ctrl+Del")
         act(m, "Toggle &cleared", self.toggle_cleared, "Ctrl+K")
+        m.addSeparator()
+        act(m, "&Search and replace…", self.search_replace, "Ctrl+H")
 
         m = self.menuBar().addMenu("&Account")
         act(m, "&New account…", self.new_account)
@@ -282,6 +292,7 @@ class MainWindow(QMainWindow):
 
     def show_accounts(self):
         """Load the selected accounts into the register."""
+        self.update_totals()
         self.model.set_account(self.accounts or None)
         self.view.setColumnHidden(RegisterModel.C_ACCOUNT, self.account is not None)
         self.update_title()
@@ -290,14 +301,23 @@ class MainWindow(QMainWindow):
         name = os.path.basename(self.ledger.path) if self.ledger and self.ledger.path else "(no file)"
         dirty = "*" if self.ledger and self.ledger.dirty else ""
         self.setWindowTitle(f"{dirty}{name} — vibeacct")
-        self.title.setText(", ".join(self.accounts) or ALL_ACCOUNTS)
+        names = ", ".join(self.accounts) or ALL_ACCOUNTS
+        short = names if len(names) <= TITLE_MAX else names[: TITLE_MAX - 3] + "..."
+        self.title.setText(short)
+        self.title.setToolTip(names if short != names else "")
+
+    def filter_changed(self, text):
+        error = self.proxy.set_text(text)
+        # An invalid regex is ignored (all rows shown); tint the field and say why.
+        self.search.setStyleSheet("background: rgb(255, 225, 225);" if error else "")
+        self.search.setToolTip(f"Invalid regular expression: {error}" if error else self.filter_help)
 
     def refresh_accounts(self, reset_register=True):
         """Rebuild the account list, keeping the current selection."""
         self.tree.blockSignals(True)
         self.tree.clear()
         balances = self.ledger.account_balances(as_of=dt.date.today()) if self.ledger else {}
-        total = Decimal("0")
+        self.balances = balances
         sel = []
         for name in [ALL_ACCOUNTS] + sorted(balances, key=str.lower):
             if name == ALL_ACCOUNTS:
@@ -307,7 +327,6 @@ class MainWindow(QMainWindow):
                 item.setFont(0, f)
             else:
                 bal, clr = balances[name]
-                total += bal
                 item = QTreeWidgetItem([name, money(bal), money(clr)])
                 for c, v in ((1, bal), (2, clr)):
                     item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
@@ -316,15 +335,16 @@ class MainWindow(QMainWindow):
             self.tree.addTopLevelItem(item)
             if name in (self.accounts or [ALL_ACCOUNTS]):
                 sel.append(item)
-        net = QTreeWidgetItem(["Net worth (today)", money(total), ""])
-        net.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
-        if total:
-            net.setForeground(1, money_color(total))
-        net.setFlags(Qt.ItemIsEnabled)
-        f = net.font(0)
-        f.setItalic(True)
-        net.setFont(0, f)
-        self.tree.addTopLevelItem(net)
+        # Totals of the selected accounts; filled in by update_totals().
+        self.total_item = QTreeWidgetItem(["Total", "", ""])
+        self.total_item.setFlags(Qt.ItemIsEnabled)
+        for c in range(3):
+            f = self.total_item.font(c)
+            f.setBold(True)
+            self.total_item.setFont(c, f)
+            if c:
+                self.total_item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
+        self.tree.addTopLevelItem(self.total_item)
         if sel:
             self.tree.setCurrentItem(sel[0])
             for item in sel:
@@ -333,7 +353,18 @@ class MainWindow(QMainWindow):
         if reset_register:
             self.show_accounts()
         else:
+            self.update_totals()
             self.update_title()
+
+    def update_totals(self):
+        """Sum the balance and cleared columns over the selected accounts (all if none)."""
+        zero = Decimal("0")
+        names = self.accounts or self.balances
+        bal = sum((self.balances[n][0] for n in names if n in self.balances), zero)
+        clr = sum((self.balances[n][1] for n in names if n in self.balances), zero)
+        for c, v in ((1, bal), (2, clr)):
+            self.total_item.setText(c, money(v))
+            self.total_item.setForeground(c, money_color(v) or self.tree.palette().text())
 
     def changed(self, select_txn=None):
         """Call after any ledger mutation."""
@@ -436,6 +467,14 @@ class MainWindow(QMainWindow):
         # rather than resetting the register (which would lose the scroll position).
         self.model.txn_changed(t)
         self.refresh_accounts(reset_register=False)
+
+    def search_replace(self):
+        if not self.need_ledger():
+            return
+        dlg = ReplaceDialog(self.ledger, self.accounts, self)
+        dlg.exec()
+        if dlg.replaced:
+            self.changed()
 
     # ------------------------------------------------------------------ accounts
 

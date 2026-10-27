@@ -121,3 +121,33 @@ def test_report_export_formats():
     assert "| Food \\| Dining | -$1,234.50 | 3 |" in md
     page = export.to_html("Report", [], headers, rows, total_prefix="— ")
     assert "-$1,234.50" in page and 'style="font-weight:bold"' in page
+
+
+def test_search_and_replace():
+    import re
+
+    led = Ledger(
+        [
+            Transaction("Checking", "01-02-2026", "AMZN Mktp US", "Shopping", memo="amzn order"),
+            Transaction("Card", "01-03-2026", "Amzn Prime", "Subscriptions"),
+            Transaction("Checking", "01-04-2026", "Pay card", "{Card}", amount_str="-10.00"),
+        ]
+    )
+    pat = re.compile(r"amzn\b", re.IGNORECASE)
+    found = led.search(pat, ["description", "memo"])
+    assert [(t.description, attr, new) for t, attr, _, new in found] == [
+        ("AMZN Mktp US", "description", None),
+        ("AMZN Mktp US", "memo", None),
+        ("Amzn Prime", "description", None),
+    ]
+    assert len(led.search(pat, ["description"], accounts={"Card"})) == 1
+    found = led.search(pat, ["description"], replacement="Amazon")
+    assert [new for *_, new in found] == ["Amazon Mktp US", "Amazon Prime"]
+    led.apply_replacements([(t, attr, new) for t, attr, _, new in found])
+    assert led.dirty and led.transactions[1].description == "Amazon Prime"
+
+    assert Ledger.replacement_problem("category", "{Card}", "{Visa}")
+    assert Ledger.replacement_problem("category", "Shopping", "{Card}")
+    assert Ledger.replacement_problem("memo", "a", "a")
+    assert Ledger.replacement_problem("memo", "a", "a\nb")
+    assert Ledger.replacement_problem("category", "Shopping", "Retail") is None

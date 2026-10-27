@@ -34,8 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 from .. import export, importer
-from ..ledger import SPLIT_CATEGORY, Transaction, transfer_category
-from .models import keep_colors_when_selected, money, money_color, money_html
+from ..ledger import SEARCH_FIELDS, SPLIT_CATEGORY, Transaction, transfer_category
+from .models import FUTURE_COLOR, keep_colors_when_selected, money, money_color, money_html
 
 
 def qdate(d):
@@ -568,7 +568,7 @@ class ReportDialog(QDialog):
             + 8
         )
         self.accounts.setFixedWidth(acct_width)
-        toggle_all = QPushButton("All accounts on/off")
+        toggle_all = QPushButton("Accounts All/None")
         toggle_all.setMaximumWidth(acct_width)
         toggle_all.clicked.connect(self.toggle_accounts)
         self.cat_regex = QLineEdit()
@@ -826,3 +826,168 @@ class ReportDialog(QDialog):
                 (inc if t.amount > 0 else exp)[m] += t.amount
             months = sorted(set(inc) | set(exp))
             self.fill(["Month", "Income", "Expense", "Net"], [[m, inc[m], exp[m], inc[m] + exp[m]] for m in months])
+
+
+class ReplaceDialog(QDialog):
+    """Find a regex in transaction text fields and optionally replace it."""
+
+    C_CHECK, C_DATE, C_ACCOUNT, C_FIELD, C_OLD, C_NEW = range(6)
+
+    def __init__(self, ledger, accounts=None, parent=None):
+        super().__init__(parent)
+        self.ledger = ledger
+        self.replaced = 0
+        self.matches = []
+        self.setWindowTitle("Search and replace")
+        self.find = QLineEdit()
+        self.find.setPlaceholderText("regular expression")
+        self.find.setToolTip("Python regular expression, matched anywhere in the field")
+        self.find.returnPressed.connect(self.search)
+        self.do_replace = QCheckBox("Replace with")
+        self.do_replace.toggled.connect(self.search)
+        self.replace = QLineEdit()
+        self.replace.setToolTip("Replacement text; \\1 or \\g<name> insert matched groups, \\g<0> the whole match")
+        self.replace.setEnabled(False)
+        self.do_replace.toggled.connect(self.replace.setEnabled)
+        self.replace.returnPressed.connect(self.search)
+        self.case = QCheckBox("Case sensitive")
+        self.case.toggled.connect(self.search)
+        self.fields = {}
+        field_row = QHBoxLayout()
+        field_row.addWidget(QLabel("Fields:"))
+        for name, attr in SEARCH_FIELDS.items():
+            cb = QCheckBox(name)
+            cb.setChecked(attr in ("description", "category", "memo"))
+            cb.toggled.connect(self.search)
+            self.fields[attr] = cb
+            field_row.addWidget(cb)
+        field_row.addStretch()
+        self.accounts = set(accounts) if accounts else None
+        self.only_selected = QCheckBox(f"Only {', '.join(accounts)}" if accounts else "All accounts")
+        self.only_selected.setChecked(bool(accounts))
+        self.only_selected.setEnabled(bool(accounts))
+        self.only_selected.toggled.connect(self.search)
+        field_row.addWidget(self.only_selected)
+        field_row.addWidget(self.case)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["", "Date", "Account", "Field", "Current", "After"])
+        self.table.verticalHeader().hide()
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.status = QLabel()
+        find_btn = QPushButton("Find")
+        find_btn.clicked.connect(self.search)
+        self.toggle_btn = QPushButton("Select All/None")
+        self.toggle_btn.setToolTip("Uncheck every replaceable match if all are checked; otherwise check them all")
+        self.toggle_btn.clicked.connect(self.toggle_all)
+        self.apply_btn = QPushButton("Replace checked")
+        self.apply_btn.clicked.connect(self.apply)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+
+        form = QGridLayout()
+        form.addWidget(QLabel("Find"), 0, 0)
+        form.addWidget(self.find, 0, 1)
+        form.addWidget(find_btn, 0, 2)
+        form.addWidget(self.do_replace, 1, 0)
+        form.addWidget(self.replace, 1, 1)
+        btnrow = QHBoxLayout()
+        btnrow.addWidget(self.toggle_btn)
+        btnrow.addWidget(self.status, 1)
+        btnrow.addWidget(self.apply_btn)
+        btnrow.addWidget(close)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addLayout(field_row)
+        lay.addWidget(self.table, 1)
+        lay.addLayout(btnrow)
+        self.resize(1000, 600)
+        self.search()
+
+    def search(self):
+        replacing = self.do_replace.isChecked()
+        for w in (self.toggle_btn, self.apply_btn):
+            w.setEnabled(replacing)
+        self.matches = []
+        text = self.find.text()
+        if not text:
+            self.fill(replacing, "Enter a regular expression to search for.")
+            return
+        try:
+            pat = re.compile(text, 0 if self.case.isChecked() else re.IGNORECASE)
+        except re.error as e:
+            self.fill(replacing, f"Invalid regex: {e}", error=True)
+            return
+        attrs = [a for a, cb in self.fields.items() if cb.isChecked()]
+        accounts = self.accounts if self.only_selected.isChecked() else None
+        try:
+            self.matches = self.ledger.search(pat, attrs, self.replace.text() if replacing else None, accounts)
+        except (re.error, IndexError) as e:  # bad group reference in the replacement
+            self.fill(replacing, f"Invalid replacement: {e}", error=True)
+            return
+        self.fill(replacing)
+
+    def fill(self, replacing, message=None, error=False):
+        """Show self.matches, and `message` (or a match count) in the status line."""
+        names = {a: n for n, a in SEARCH_FIELDS.items()}
+        self.table.setRowCount(len(self.matches))
+        self.table.setColumnHidden(self.C_CHECK, not replacing)
+        self.table.setColumnHidden(self.C_NEW, not replacing)
+        blocked = 0
+        for r, (t, attr, old, new) in enumerate(self.matches):
+            problem = self.ledger.replacement_problem(attr, old, new) if replacing else None
+            check = QTableWidgetItem()
+            if problem:
+                blocked += 1
+                check.setFlags(Qt.NoItemFlags)
+                check.setCheckState(Qt.Unchecked)
+                check.setToolTip(f"Can't replace: {problem}")
+            else:
+                check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                check.setCheckState(Qt.Checked)
+            self.table.setItem(r, self.C_CHECK, check)
+            for c, text in (
+                (self.C_DATE, t.date_str),
+                (self.C_ACCOUNT, t.account),
+                (self.C_FIELD, names[attr]),
+                (self.C_OLD, old),
+                (self.C_NEW, f"({problem})" if problem else new or ""),
+            ):
+                self.table.setItem(r, c, QTableWidgetItem(text))
+            if problem:
+                self.table.item(r, self.C_NEW).setForeground(FUTURE_COLOR)
+        self.table.resizeColumnsToContents()
+        if message is None:
+            txns = len({id(m[0]) for m in self.matches})
+            message = f"{len(self.matches)} matches in {txns} transactions"
+            if blocked:
+                message += f"; {blocked} can't be replaced (hover the checkbox for why)"
+        self.status.setStyleSheet("color: rgb(190, 30, 30);" if error else "")
+        self.status.setText(message)
+
+    def toggle_all(self):
+        """Uncheck all replaceable matches if all are checked; otherwise check them all.
+        Matches that can't be replaced stay unchecked."""
+        items = [self.table.item(r, self.C_CHECK) for r in range(self.table.rowCount())]
+        items = [i for i in items if i.flags() & Qt.ItemIsUserCheckable]
+        state = Qt.Unchecked if all(i.checkState() == Qt.Checked for i in items) else Qt.Checked
+        for i in items:
+            i.setCheckState(state)
+
+    def apply(self):
+        changes = [
+            (t, attr, new)
+            for r, (t, attr, old, new) in enumerate(self.matches)
+            if self.table.item(r, self.C_CHECK).checkState() == Qt.Checked
+        ]
+        if not changes:
+            return
+        n = len({id(t) for t, _, _ in changes})
+        msg = f"Replace {len(changes)} matches in {n} transactions?\n\nThe ledger file isn't changed until you save."
+        if QMessageBox.question(self, "Search and replace", msg) != QMessageBox.Yes:
+            return
+        self.ledger.apply_replacements(changes)
+        self.replaced += len(changes)
+        self.search()  # show what still matches

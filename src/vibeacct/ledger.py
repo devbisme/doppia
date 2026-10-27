@@ -30,6 +30,8 @@ COLUMNS = [
 DATE_FMT = "%m-%d-%Y"
 SPLIT_CATEGORY = "{SPLIT}"
 OPENING_DESCRIPTION = "Beginning Balance"
+# Text fields open to search and replace: display name -> Transaction attribute.
+SEARCH_FIELDS = {"Description": "description", "Category": "category", "Memo": "memo", "Ref": "ref", "Tags": "tags"}
 
 
 @functools.lru_cache(maxsize=None)
@@ -228,6 +230,40 @@ class Ledger:
             ):
                 return t
         return None
+
+    def search(self, pattern, attrs, replacement=None, accounts=None):
+        """Matches of a compiled regex in the given text attributes, as (txn, attr, old, new)
+        tuples in ledger order. `new` is the re.sub result, or None when only searching.
+        `accounts` limits the search to those accounts (None for all)."""
+        out = []
+        for t in self.transactions:
+            if accounts is not None and t.account not in accounts:
+                continue
+            for attr in attrs:
+                old = getattr(t, attr)
+                if pattern.search(old):
+                    new = None if replacement is None else pattern.sub(replacement, old)
+                    out.append((t, attr, old, new))
+        return out
+
+    @staticmethod
+    def replacement_problem(attr, old, new):
+        """Why a replacement can't be applied, or None if it can."""
+        if new == old:
+            return "no change"
+        if "\n" in new or "\r" in new:
+            return "would contain a line break"
+        if attr == "category" and (old.startswith("{") or new.startswith("{")):
+            # Transfer categories name accounts and have mirror rows; {SPLIT} marks splits.
+            return "transfer/split category (use Account → Rename account)"
+        return None
+
+    def apply_replacements(self, changes):
+        """Apply (txn, attr, new) changes. Callers check replacement_problem() first."""
+        for t, attr, new in changes:
+            setattr(t, attr, new)
+        if changes:
+            self.dirty = True
 
     # ---------------------------------------------------------------- mutation
 

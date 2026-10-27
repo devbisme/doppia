@@ -1,6 +1,7 @@
 """Qt table models over a Ledger."""
 
 import datetime as dt
+import re
 from decimal import Decimal
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
@@ -205,12 +206,13 @@ class RegisterModel(QAbstractTableModel):
 
 
 class RegisterFilter(QSortFilterProxyModel):
-    """Case-insensitive text filter across description, category, memo, ref, and amount.
+    """Case-insensitive regex filter: a row matches if the regex is found in its description,
+    category, memo, ref, date, or amount (either as 1234.56 or as $1,234.56).
     Sorting is done by RegisterModel; this proxy only filters."""
 
     def __init__(self):
         super().__init__()
-        self.text = ""
+        self.pattern = None
         self.uncleared_only = False
 
     def sort(self, column, order=Qt.AscendingOrder):
@@ -232,8 +234,15 @@ class RegisterFilter(QSortFilterProxyModel):
         return super().headerData(section, orientation, role)
 
     def set_text(self, text):
-        self.text = text.lower().strip()
+        """Filter by a regex. Returns an error message for an invalid regex (which is ignored,
+        showing all rows), else None."""
+        error = None
+        try:
+            self.pattern = re.compile(text.strip(), re.IGNORECASE) if text.strip() else None
+        except re.error as e:
+            self.pattern, error = None, str(e)
         self.invalidateFilter()
+        return error
 
     def set_uncleared_only(self, on):
         self.uncleared_only = on
@@ -243,7 +252,9 @@ class RegisterFilter(QSortFilterProxyModel):
         t = self.sourceModel().txn(row)
         if self.uncleared_only and t.is_cleared:
             return False
-        if not self.text:
+        if self.pattern is None:
             return True
-        hay = " ".join((t.description, t.category, t.memo, t.ref, t.amount_str, money(t.amount), t.date_str)).lower()
-        return all(word in hay for word in self.text.split())
+        search = self.pattern.search
+        return any(
+            search(f) for f in (t.description, t.category, t.memo, t.ref, t.amount_str, money(t.amount), t.date_str)
+        )
