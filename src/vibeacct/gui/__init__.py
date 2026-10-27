@@ -42,13 +42,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = QSettings("vibeacct", "vibeacct")
         self.ledger = None
-        self.account = None
+        self.accounts = []  # selected account names; empty means all accounts
 
         # Account list: name, balance as of today, cleared balance.
         self.tree = QTreeWidget()
         keep_colors_when_selected(self.tree)
         self.tree.setHeaderLabels(["Account", "Balance", "Cleared"])
         self.tree.setRootIsDecorated(False)
+        # Ctrl/Shift-click selects several accounts; the register shows their combined transactions.
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self.account_selected)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setStretchLastSection(False)
@@ -269,11 +271,26 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ view refresh
 
+    @property
+    def account(self):
+        """The selected account when exactly one is selected, else None."""
+        return self.accounts[0] if len(self.accounts) == 1 else None
+
+    @account.setter
+    def account(self, name):
+        self.accounts = [] if name is None else [name]
+
+    def show_accounts(self):
+        """Load the selected accounts into the register."""
+        self.model.set_account(self.accounts or None)
+        self.view.setColumnHidden(RegisterModel.C_ACCOUNT, self.account is not None)
+        self.update_title()
+
     def update_title(self):
         name = os.path.basename(self.ledger.path) if self.ledger and self.ledger.path else "(no file)"
         dirty = "*" if self.ledger and self.ledger.dirty else ""
         self.setWindowTitle(f"{dirty}{name} — vibeacct")
-        self.title.setText(self.account or ALL_ACCOUNTS)
+        self.title.setText(", ".join(self.accounts) or ALL_ACCOUNTS)
 
     def refresh_accounts(self, reset_register=True):
         """Rebuild the account list, keeping the current selection."""
@@ -281,7 +298,7 @@ class MainWindow(QMainWindow):
         self.tree.clear()
         balances = self.ledger.account_balances(as_of=dt.date.today()) if self.ledger else {}
         total = Decimal("0")
-        sel = None
+        sel = []
         for name in [ALL_ACCOUNTS] + sorted(balances, key=str.lower):
             if name == ALL_ACCOUNTS:
                 item = QTreeWidgetItem([name, "", ""])
@@ -297,8 +314,8 @@ class MainWindow(QMainWindow):
                     if v:
                         item.setForeground(c, money_color(v))
             self.tree.addTopLevelItem(item)
-            if name == (self.account or ALL_ACCOUNTS):
-                sel = item
+            if name in (self.accounts or [ALL_ACCOUNTS]):
+                sel.append(item)
         net = QTreeWidgetItem(["Net worth (today)", money(total), ""])
         net.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
         if total:
@@ -309,12 +326,14 @@ class MainWindow(QMainWindow):
         net.setFont(0, f)
         self.tree.addTopLevelItem(net)
         if sel:
-            self.tree.setCurrentItem(sel)
+            self.tree.setCurrentItem(sel[0])
+            for item in sel:
+                item.setSelected(True)
         self.tree.blockSignals(False)
         if reset_register:
-            self.model.set_account(self.account)
-            self.view.setColumnHidden(RegisterModel.C_ACCOUNT, self.account is not None)
-        self.update_title()
+            self.show_accounts()
+        else:
+            self.update_title()
 
     def changed(self, select_txn=None):
         """Call after any ledger mutation."""
@@ -332,16 +351,17 @@ class MainWindow(QMainWindow):
                 return
 
     def account_selected(self):
-        items = self.tree.selectedItems()
-        if not items or self.ledger is None:
+        if self.ledger is None:
             return
-        name = items[0].text(0)
-        if name not in self.ledger.accounts() and name != ALL_ACCOUNTS:
+        names = {item.text(0) for item in self.tree.selectedItems()}
+        if not names:
             return
-        self.account = None if name == ALL_ACCOUNTS else name
-        self.model.set_account(self.account)
-        self.view.setColumnHidden(RegisterModel.C_ACCOUNT, self.account is not None)
-        self.update_title()
+        # "All accounts" anywhere in the selection means all of them.
+        if ALL_ACCOUNTS in names:
+            self.accounts = []
+        else:
+            self.accounts = [a for a in self.ledger.accounts() if a in names]
+        self.show_accounts()
 
     def current_txn(self):
         idx = self.view.currentIndex()
@@ -360,7 +380,8 @@ class MainWindow(QMainWindow):
     def new_txn(self):
         if not self.need_ledger():
             return
-        dlg = TransactionDialog(self.ledger, account=self.account, parent=self)
+        # With several accounts selected, default the new transaction to the first of them.
+        dlg = TransactionDialog(self.ledger, account=self.accounts[0] if self.accounts else None, parent=self)
         if dlg.exec():
             t = dlg.result_txn()
             self.ledger.add(t)
@@ -465,7 +486,7 @@ class MainWindow(QMainWindow):
         if not self.need_ledger():
             return
         if self.account is None:
-            QMessageBox.information(self, "Reconcile", "Select an account first.")
+            QMessageBox.information(self, "Reconcile", "Select a single account first.")
             return
         if ReconcileDialog(self.ledger, self.account, self).exec():
             self.changed()

@@ -61,7 +61,8 @@ def money_html(value):
 
 
 class RegisterModel(QAbstractTableModel):
-    """Rows of one account (or all accounts), newest first, with running balance."""
+    """Rows of one account, several accounts, or all accounts, newest first, with running balance.
+    `account` is an account name, a collection of names, or None for all accounts."""
 
     COLS = ["Date", "Account", "Ref", "Description", "Category", "Memo", "Amount", "Clr", "Balance"]
     C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_MEMO, C_AMOUNT, C_CLR, C_BAL = range(len(COLS))
@@ -90,8 +91,11 @@ class RegisterModel(QAbstractTableModel):
             rows = []
         elif self.account is None:
             rows = list(self.ledger.transactions)
-        else:
+        elif isinstance(self.account, str):
             rows = self.ledger.for_account(self.account)
+        else:
+            names = set(self.account)
+            rows = [t for t in self.ledger.transactions if t.account in names]
         # Ledger order is newest first; within a date the file lists later entries first.
         # Running balance accumulates in chronological order, i.e. reversed list order.
         rows.sort(key=lambda t: t.date, reverse=True)  # stable: preserves within-date order

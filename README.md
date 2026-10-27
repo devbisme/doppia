@@ -18,6 +18,9 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
   visible on selected rows. `$` and commas are accepted when typing amounts.
 - Register per account or all accounts: running balance, text filter (matches `$3,000`
   or `3000`), uncleared-only filter.
+  - Ctrl/Shift-click in the account list to select several accounts; the register shows their
+    combined transactions with a combined running balance. Reconcile and Rename account need
+    a single account selected.
   - Click a column header to sort by it; click again to reverse. The sort column's header
     is highlighted, and the selection is kept when re-sorting. The register opens sorted by
     date, newest first. The Balance column is a date-order running balance, so it only
