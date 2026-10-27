@@ -1,14 +1,39 @@
-# pacioli
+# doppia
 
 Personal accounting for bank and credit card accounts (PySide6 desktop GUI).
 Data lives in a single CSV in CountAbout export format; files are written back
 byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbout).
 
+## The name
+
+doppia is named after *partita doppia*, Italian for double-entry bookkeeping. The method was
+first described in print by Luca Pacioli (c. 1447–1517), an Italian mathematician and
+Franciscan friar, in his *Summa de arithmetica, geometria, proportioni et proportionalita*
+(Venice, 1494), which earned him the title "father of accounting".
+
+## Install
+
+Install doppia from PyPI as a standalone app with
+[pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/), which keep it isolated
+without you having to manage a virtual environment:
+
+    pipx install doppia          # or: uv tool install doppia
+
+Python 3.10 or later is required. The clipboard import and **Guess with LLM** features also
+need [Ollama](https://ollama.com) with a model installed, e.g. `ollama pull gemma4:12b-it-qat`;
+everything else works without it.
+
 ## Run
 
-    uv venv .venv && uv pip install --python .venv/bin/python -e '.[test]'
-    .venv/bin/pacioli path/to/countabout-export.csv     # reopens last file if omitted
-    .venv/bin/python -m pytest
+    doppia path/to/countabout-export.csv     # reopens the last file if omitted
+
+## Development
+
+From a clone of the repository, [uv](https://docs.astral.sh/uv/) runs the app and tests
+with the dependencies it needs:
+
+    uv run doppia path/to/countabout-export.csv
+    uv run --extra test pytest
 
 ## Features
 
@@ -44,7 +69,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Transfers use CountAbout's `{Account}` category; the mirror row in the other account
   is created/updated/deleted automatically (matched by date and negated amount).
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
-  `~/.config/pacioli/import_profiles.json`; payee/category matched from history;
+  `~/.config/doppia/import_profiles.json`; payee/category matched from history;
   duplicates (same amount within 3 days) unchecked by default; imported rows marked cleared.
   - **Guess with LLM** asks the local model (the one chosen in clipboard import) which columns
     hold the date, description, amount or debit/credit, memo, and check number, and the date
@@ -96,3 +121,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Balances are sums of rows; there is no separate opening-balance field. New accounts
   get a "Beginning Balance" row.
 - `Cleared` is X/blank only (no separate reconciled state).
+
+## License
+
+MIT; see [LICENSE](LICENSE).

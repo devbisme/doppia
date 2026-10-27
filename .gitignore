@@ -4,3 +4,4 @@ __pycache__/
 *.csv.bak
 *.csv.tmp
 countabout-export*.csv
+dist/

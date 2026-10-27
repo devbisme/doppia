@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from pacioli.importer import Profile, apply_candidates, build_candidates, parse_money
-from pacioli.ledger import COLUMNS, Ledger, Transaction
+from doppia.importer import Profile, apply_candidates, build_candidates, parse_money
+from doppia.ledger import COLUMNS, Ledger, Transaction
 
 HEADER = 'Account,Date,Description,Category,Split,"Split ID",Amount,Ref,Memo,Tags,Cleared\n'
 SAMPLE = HEADER + (
@@ -111,7 +111,7 @@ def test_account_balances_matches_balance(ledger):
 
 
 def test_report_export_formats():
-    from pacioli import export
+    from doppia import export
 
     headers = ["Category", "Total", "Count"]
     rows = [["Food | Dining", Decimal("-1234.5"), 3], ["— Net", Decimal("10"), ""]]
@@ -162,7 +162,7 @@ def test_search_and_replace():
 def test_llm_rows_and_checks(monkeypatch):
     import json
 
-    from pacioli import llm
+    from doppia import llm
 
     reply = {
         "done_reason": "stop",
@@ -207,7 +207,7 @@ def test_llm_rows_and_checks(monkeypatch):
 
 
 def test_llm_unreachable(monkeypatch):
-    from pacioli import llm
+    from doppia import llm
 
     monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:9")  # discard port: nothing listens
     with pytest.raises(llm.LLMError, match="Could not reach Ollama"):
@@ -215,7 +215,7 @@ def test_llm_unreachable(monkeypatch):
 
 
 def test_bank_csv_trailing_comma(tmp_path):
-    from pacioli.importer import read_bank_csv
+    from doppia.importer import read_bank_csv
 
     # Some banks end each data row, but not the header, with an extra comma.
     path = tmp_path / "bank.csv"
@@ -231,7 +231,7 @@ def test_bank_csv_trailing_comma(tmp_path):
 
 
 def test_llm_guess_profile_checks(monkeypatch):
-    from pacioli import llm
+    from doppia import llm
 
     header = ["Date", "Desc", "Amt"]
     rows = [{"Date": "24 Oct 2026", "Desc": "SHELL", "Amt": "45.12"}, {"Date": "22 Oct 2026", "Desc": "PAY", "Amt": "-500"}]
