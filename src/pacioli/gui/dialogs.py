@@ -285,10 +285,11 @@ class ImportDialog(QDialog):
         ("memo_col", "Memo column"),
         ("ref_col", "Ref/Check column"),
     ]
-    def __init__(self, ledger, account=None, parent=None):
+    def __init__(self, ledger, account=None, parent=None, settings=None):
         super().__init__(parent)
         self.setWindowTitle("Import Bank CSV")
-        self.ledger = ledger
+        self.ledger, self.settings = ledger, settings
+        self.worker = None
         self.header, self.rows, self.candidates = [], [], []
         self.profiles = importer.load_profiles()
 
@@ -306,6 +307,13 @@ class ImportDialog(QDialog):
         self.profile.currentTextChanged.connect(self.use_profile)
         save_prof = QPushButton("Save profile…")
         save_prof.clicked.connect(self.save_profile)
+        self.guess_btn = QPushButton("Guess with LLM")
+        self.guess_btn.setToolTip(
+            f"Ask the local model ({llm_model(settings)}) which columns hold the date, description, "
+            "amounts, etc.\nOnly the header and first few rows are sent, and they stay on this machine."
+        )
+        self.guess_btn.clicked.connect(self.guess_with_llm)
+        self.guess_btn.setEnabled(False)
 
         self.col_boxes = {}
         grid = QGridLayout()
@@ -339,6 +347,7 @@ class ImportDialog(QDialog):
         top2.addWidget(QLabel("Profile"))
         top2.addWidget(self.profile, 1)
         top2.addWidget(save_prof)
+        top2.addWidget(self.guess_btn)
         buttons = QDialogButtonBox()
         self.import_btn = buttons.addButton("Import", QDialogButtonBox.AcceptRole)
         buttons.addButton(QDialogButtonBox.Cancel)
@@ -364,6 +373,7 @@ class ImportDialog(QDialog):
             QMessageBox.warning(self, "Import", f"Could not read {path}:\n{e}")
             return
         self.path.setText(path)
+        self.guess_btn.setEnabled(True)
         for cb in self.col_boxes.values():
             cb.clear()
             cb.addItems([""] + self.header)
@@ -378,6 +388,31 @@ class ImportDialog(QDialog):
         else:
             self.set_profile(importer.guess_profile(self.header))
         self.preview()
+
+    def guess_with_llm(self):
+        model = self.guess_model = llm_model(self.settings)
+        self.guess_btn.setEnabled(False)
+        self.summary.setText(f"Asking {model} about the columns… (the first run loads the model and can take a minute)")
+        self.worker = LLMWorker(llm.guess_profile, self.header, self.rows, self.account.currentText(), model)
+        self.worker.done.connect(self.guessed)
+        self.worker.start()
+
+    def guessed(self, result, error):
+        self.guess_btn.setEnabled(True)
+        if error:
+            self.summary.setText(f'<span style="color: rgb(190, 30, 30)">{error}</span>')
+            return
+        profile, problems = result
+        self.profile.setCurrentText("")  # the guess isn't a saved profile
+        self.set_profile(profile)
+        if problems:
+            self.summary.setText(
+                '<span style="color: rgb(190, 30, 30)">The guess needs fixing: ' + "; ".join(problems) + "</span>"
+            )
+            return
+        self.preview()
+        note = " Flip signs is on because most amounts are positive (charges listed as positive)." if profile.negate else ""
+        self.summary.setText(f"Columns guessed by {self.guess_model}; check the preview.{note} " + self.summary.text())
 
     def set_profile(self, p):
         for attr, cb in self.col_boxes.items():
@@ -433,22 +468,27 @@ class ImportDialog(QDialog):
 
 
 class LLMWorker(QThread):
-    """Runs llm.extract_transactions off the GUI thread. Emits (rows, "") or (None, error)."""
+    """Runs an llm function off the GUI thread. Emits (result, "") or (None, error message)."""
 
     done = Signal(object, str)
     running = set()  # keeps workers alive if their dialog closes before they finish
 
-    def __init__(self, text, account, model):
+    def __init__(self, fn, *args):
         super().__init__()
-        self.text, self.account, self.model = text, account, model
+        self.fn, self.args = fn, args
         LLMWorker.running.add(self)
         self.finished.connect(lambda: LLMWorker.running.discard(self))
 
     def run(self):
         try:
-            self.done.emit(llm.extract_transactions(self.text, self.account, dt.date.today(), self.model), "")
+            self.done.emit(self.fn(*self.args), "")
         except llm.LLMError as e:
             self.done.emit(None, str(e))
+
+
+def llm_model(settings):
+    """The Ollama model chosen in the clipboard import dialog (shared by all LLM features)."""
+    return (settings.value("llm_model") if settings is not None else None) or llm.DEFAULT_MODEL
 
 
 class ClipboardImportDialog(QDialog):
@@ -516,7 +556,7 @@ class ClipboardImportDialog(QDialog):
         self.load_models()
 
     def load_models(self):
-        saved = self.settings.value("llm_model") or llm.DEFAULT_MODEL
+        saved = llm_model(self.settings)
         try:
             self.model.addItems(llm.list_models())
         except llm.LLMError as e:
@@ -533,7 +573,7 @@ class ClipboardImportDialog(QDialog):
         self.parse_btn.setEnabled(False)
         self.import_btn.setEnabled(False)
         self.status.setText(f"Reading the text with {model}… (the first run loads the model and can take a minute)")
-        self.worker = LLMWorker(text, self.account.currentText(), model)
+        self.worker = LLMWorker(llm.extract_transactions, text, self.account.currentText(), dt.date.today(), model)
         self.worker.done.connect(self.parsed)
         self.worker.start()
 

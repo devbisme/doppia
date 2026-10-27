@@ -17,7 +17,9 @@ from .ledger import Transaction
 PROFILE_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "pacioli", "import_profiles.json"
 )
-DATE_FORMATS = ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%d/%m/%Y", "%b %d, %Y", "%Y/%m/%d"]
+DATE_FORMATS = [
+    "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%d/%m/%Y", "%b %d, %Y", "%Y/%m/%d", "%d %b %Y", "%d-%b-%Y",
+]
 DUPLICATE_WINDOW_DAYS = 3
 
 
@@ -56,13 +58,22 @@ def read_bank_csv(path):
     """Return (header, rows) where rows are dicts. Skips any preamble lines before the header."""
     with open(path, newline="", encoding="utf-8-sig") as f:
         lines = list(csv.reader(f))
-    # The header is the first row with the modal column count (banks sometimes prepend junk).
+    # Banks sometimes prepend junk lines, and some end each data row (but not the header) with an
+    # extra comma. The header is the first row about as wide as the modal row that holds no numbers.
     counts = [len(r) for r in lines if any(c.strip() for c in r)]
     width = max(set(counts), key=counts.count) if counts else 0
-    start = next((i for i, r in enumerate(lines) if len(r) == width), 0)
+    start = next(
+        (i for i, r in enumerate(lines) if width - 1 <= len(r) <= width and not any(_DATA_LIKE.fullmatch(c.strip()) for c in r)),
+        next((i for i, r in enumerate(lines) if len(r) == width), 0),
+    )
     header = [h.strip() for h in lines[start]] if lines else []
-    rows = [dict(zip(header, r)) for r in lines[start + 1 :] if len(r) == width and any(c.strip() for c in r)]
+    rows = [
+        dict(zip(header, r)) for r in lines[start + 1 :] if len(r) >= len(header) and any(c.strip() for c in r)
+    ]
     return header, rows
+
+
+_DATA_LIKE = re.compile(r"[-+$(]*[\d][\d,./: -]*\)?")  # an amount, date, or number
 
 
 def guess_profile(header):

@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
     def import_csv(self):
         if not self.need_ledger():
             return
-        dlg = ImportDialog(self.ledger, self.account, self)
+        dlg = ImportDialog(self.ledger, self.account, self, self.settings)
         if dlg.exec():
             self.statusBar().showMessage(f"Imported {dlg.imported} transactions", 5000)
             self.changed()

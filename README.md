@@ -46,6 +46,12 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
   `~/.config/pacioli/import_profiles.json`; payee/category matched from history;
   duplicates (same amount within 3 days) unchecked by default; imported rows marked cleared.
+  - **Guess with LLM** asks the local model (the one chosen in clipboard import) which columns
+    hold the date, description, amount or debit/credit, memo, and check number, and the date
+    format. Only the header and first 8 rows are sent. Its answer is limited to the file's
+    real column names and checked against the sample rows; **Flip signs** is set from the
+    data (mostly positive amounts = card charges listed as positive), not by the model.
+    Takes a few seconds; save the result as a profile to skip it next time.
 - Import from clipboard (File menu, Ctrl+Shift+V): copy transactions from a bank or card
   website or statement, and a local LLM served by [Ollama](https://ollama.com) turns the text
   into transactions for the chosen account (the active one by default). Nothing leaves your

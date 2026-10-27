@@ -212,3 +212,39 @@ def test_llm_unreachable(monkeypatch):
     monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:9")  # discard port: nothing listens
     with pytest.raises(llm.LLMError, match="Could not reach Ollama"):
         llm.list_models()
+
+
+def test_bank_csv_trailing_comma(tmp_path):
+    from pacioli.importer import read_bank_csv
+
+    # Some banks end each data row, but not the header, with an extra comma.
+    path = tmp_path / "bank.csv"
+    path.write_text(
+        "Account: CHECKING\n"
+        '"Details","Posting Date","Description","Amount"\n'
+        '"DEBIT","10/24/2026","INGLES","-87.65",\n'
+        '"CREDIT","10/23/2026","Employer","3000.00",\n'
+    )
+    header, rows = read_bank_csv(path)
+    assert header == ["Details", "Posting Date", "Description", "Amount"]
+    assert [r["Amount"] for r in rows] == ["-87.65", "3000.00"]
+
+
+def test_llm_guess_profile_checks(monkeypatch):
+    from pacioli import llm
+
+    header = ["Date", "Desc", "Amt"]
+    rows = [{"Date": "24 Oct 2026", "Desc": "SHELL", "Amt": "45.12"}, {"Date": "22 Oct 2026", "Desc": "PAY", "Amt": "-500"}]
+    rows.append({"Date": "20 Oct 2026", "Desc": "SPOTIFY", "Amt": "11.99"})
+    answer = dict(date_col="Date", date_format="%m/%d/%Y", description_col="Desc", amount_col="",
+                  debit_col="Amt", credit_col="Amt", memo_col="", ref_col="")
+    monkeypatch.setattr(llm, "_chat_json", lambda *a, **k: dict(answer))
+    p, problems = llm.guess_profile(header, rows, "Card")
+    assert problems == []
+    assert (p.amount_col, p.debit_col, p.credit_col) == ("Amt", "", "")  # same column for both -> signed amount
+    assert p.date_format == ""  # wrong format replaced by auto-detect, which handles "24 Oct 2026"
+    assert p.negate  # mostly positive amounts: charges listed as positive
+
+    answer.update(date_col="Desc")
+    p, problems = llm.guess_profile(header, rows, "Card")
+    assert problems and "date column" in problems[0]

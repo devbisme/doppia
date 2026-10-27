@@ -5,6 +5,8 @@ Results are rows of strings shaped for importer.build_candidates() with LLM_PROF
 pasted transactions get the same payee matching and duplicate detection as CSV imports.
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -12,7 +14,7 @@ import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 
-from .importer import Profile
+from .importer import DATE_FORMATS, Profile, parse_date, parse_money
 
 DEFAULT_MODEL = "gemma4:12b-it-qat"  # the most accurate of the models tried on sample statements
 CONTEXT_TOKENS = 16384  # room for a page or two of transactions plus the JSON reply
@@ -69,6 +71,25 @@ TEXT:
 {text}"""
 
 
+MAPPING_PROMPT = """Below are the header and first rows of a CSV file downloaded from a bank or credit \
+card website for the account "{account}". Say which column holds each field, using the exact column \
+names from the header, or "" if there is no such column.
+
+- date_col: the date to record the transaction on. If there are both a transaction date and a posting \
+date, choose the posting date.
+- date_format: the Python strptime format of that column's dates, chosen from the allowed list.
+- description_col: the payee or description.
+- amount_col: a single column holding the amount of every transaction. Leave it "" if amounts are \
+split into separate debit and credit (or withdrawal and deposit) columns.
+- debit_col and credit_col: two DIFFERENT columns, money out and money in, only when amounts are split \
+that way. If one column holds all amounts (positive and negative), use amount_col and leave these "".
+- memo_col: a memo or notes column, if any (not the description).
+- ref_col: a check number or reference number column, if any.
+
+CSV:
+{sample}"""
+
+
 class LLMError(Exception):
     pass
 
@@ -105,22 +126,11 @@ def list_models():
 def extract_transactions(text, account, today, model=DEFAULT_MODEL):
     """Rows of strings {date, description, amount, ref, pending} found in `text` by the model.
     `pending` is "1" or ""."""
-    body = {
-        "model": model,
-        "stream": False,
-        "think": False,
-        "format": SCHEMA,
-        "options": {"temperature": 0, "num_ctx": CONTEXT_TOKENS},
-        "messages": [{"role": "user", "content": PROMPT.format(account=account, today=today.isoformat(), text=text)}],
-    }
-    reply = _request("/api/chat", body, timeout=TIMEOUT_SECONDS)
-    if reply.get("done_reason") == "length":
-        raise LLMError("The model's reply was cut off. Copy fewer transactions at a time.")
-    content = reply.get("message", {}).get("content", "")
+    got = _chat_json(PROMPT.format(account=account, today=today.isoformat(), text=text), SCHEMA, model)
     try:
-        found = json.loads(content)["transactions"]
-    except (ValueError, KeyError, TypeError):
-        raise LLMError(f"{model} did not return usable JSON; try another model. Reply began: {content[:200]!r}")
+        found = got["transactions"]
+    except (KeyError, TypeError):
+        raise LLMError(f"{model} did not return a list of transactions; try another model.")
     rows = []
     for t in found:
         try:
@@ -137,6 +147,100 @@ def extract_transactions(text, account, today, model=DEFAULT_MODEL):
             }
         )
     return rows
+
+
+def _chat_json(prompt, schema, model, timeout=TIMEOUT_SECONDS):
+    """Send one prompt and return the reply parsed as JSON matching `schema`."""
+    body = {
+        "model": model,
+        "stream": False,
+        "think": False,
+        "format": schema,
+        "options": {"temperature": 0, "num_ctx": CONTEXT_TOKENS},
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    reply = _request("/api/chat", body, timeout=timeout)
+    if reply.get("done_reason") == "length":
+        raise LLMError("The model's reply was cut off. Copy fewer transactions at a time.")
+    content = reply.get("message", {}).get("content", "")
+    try:
+        return json.loads(content)
+    except ValueError:
+        raise LLMError(f"{model} did not return usable JSON; try another model. Reply began: {content[:200]!r}")
+
+
+def guess_profile(header, rows, account, model=DEFAULT_MODEL, sample_size=8):
+    """Ask the model to map a bank CSV's columns (header and dict rows from read_bank_csv)
+    onto a Profile. Column names are constrained to the header, so it can't invent one;
+    the date format and amount columns are then checked against the sample rows."""
+    cols = [h for h in header if h]
+    column = {"type": "string", "enum": cols + [""]}
+    schema = {
+        "type": "object",
+        "properties": {
+            "date_col": column,
+            "date_format": {"type": "string", "enum": DATE_FORMATS},
+            "description_col": column,
+            "amount_col": column,
+            "debit_col": column,
+            "credit_col": column,
+            "memo_col": column,
+            "ref_col": column,
+        },
+        "required": ["date_col", "date_format", "description_col", "amount_col", "debit_col", "credit_col", "memo_col", "ref_col"],
+    }
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(header)
+    sample = rows[:sample_size]
+    for row in sample:
+        w.writerow([row.get(h, "") for h in header])
+    prompt = MAPPING_PROMPT.format(account=account, sample=out.getvalue())
+    prompt += "\nAllowed date formats: " + ", ".join(DATE_FORMATS)
+    got = _chat_json(prompt, schema, model, timeout=120)
+    p = Profile(**{k: got.get(k, "") for k in schema["properties"]})
+    if p.debit_col and p.debit_col == p.credit_col:  # one column named for both: it's a signed amount
+        p.amount_col = p.debit_col
+    if p.amount_col:
+        p.debit_col = p.credit_col = ""
+    problems = check_profile(p, sample)
+    if p.amount_col and not problems:
+        # Decided from the data, not the model (which got it wrong in testing): checking
+        # accounts are mostly money out shown negative, so mostly-positive amounts mean a
+        # card file listing charges as positive.
+        amounts = [parse_money(r.get(p.amount_col, "")) for r in rows]
+        amounts = [a for a in amounts if a]
+        p.negate = sum(a > 0 for a in amounts) > len(amounts) / 2
+    return p, problems
+
+
+def check_profile(p, rows):
+    """Problems with a mapping found by parsing sample rows; fixes what it safely can
+    (an unparseable date format falls back to auto-detect)."""
+    problems = []
+    if not p.date_col or not p.description_col or not (p.amount_col or p.debit_col or p.credit_col):
+        problems.append("no date, description, or amount column found")
+        return problems
+    dates = [r.get(p.date_col, "") for r in rows if r.get(p.date_col, "").strip()]
+    try:
+        for d in dates:
+            parse_date(d, p.date_format)
+    except ValueError:
+        p.date_format = ""  # let the importer try each known format
+        try:
+            for d in dates:
+                parse_date(d)
+        except ValueError as e:
+            problems.append(f"date column {p.date_col!r}: {e}")
+    for col in (p.amount_col, p.debit_col, p.credit_col):
+        if not col:
+            continue
+        try:
+            for r in rows:
+                parse_money(r.get(col, ""))
+        except ValueError as e:
+            problems.append(f"amount column {col!r}: {e}")
+    return problems
 
 
 def amount_in_text(amount, text):
