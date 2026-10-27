@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from ..ledger import Ledger
 from .dialogs import ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
-from .models import RegisterFilter, RegisterModel, keep_colors_when_selected, money, money_color
+from .models import PaddedDelegate, RegisterFilter, RegisterModel, keep_colors_when_selected, money, money_color
 
 ALL_ACCOUNTS = "All accounts"
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
@@ -50,6 +50,8 @@ class MainWindow(QMainWindow):
         self.tree = QTreeWidget()
         keep_colors_when_selected(self.tree)
         self.tree.setHeaderLabels(["Account", "Balance", "Cleared"])
+        for col in (1, 2):  # right-aligned like the amounts below them
+            self.tree.headerItem().setTextAlignment(col, Qt.AlignRight | Qt.AlignVCenter)
         self.tree.setRootIsDecorated(False)
         # Ctrl/Shift-click selects several accounts; the register shows their combined transactions.
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -58,6 +60,8 @@ class MainWindow(QMainWindow):
         self.tree.header().setStretchLastSection(False)
         for col in (1, 2):
             self.tree.header().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        # Widen the right-aligned Cleared column by 2 characters to separate it from Balance.
+        self.tree.setItemDelegateForColumn(2, PaddedDelegate(2, self.tree))
 
         # Register.
         self.model = RegisterModel(None)

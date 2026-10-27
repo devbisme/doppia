@@ -29,6 +29,20 @@ class KeepColorDelegate(QStyledItemDelegate):
             option.palette.setBrush(QPalette.HighlightedText, QBrush(fg))
 
 
+class PaddedDelegate(KeepColorDelegate):
+    """KeepColorDelegate that adds `chars` average character widths to a cell's width,
+    so a ResizeToContents column leaves extra space before right-aligned text."""
+
+    def __init__(self, chars, parent=None):
+        super().__init__(parent)
+        self.chars = chars
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        size.setWidth(size.width() + self.chars * option.fontMetrics.averageCharWidth())
+        return size
+
+
 def keep_colors_when_selected(view):
     """Use KeepColorDelegate and a light selection highlight so red/green text stays readable."""
     view.setItemDelegate(KeepColorDelegate(view))
