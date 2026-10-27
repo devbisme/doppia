@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vibeacct"
+name = "pacioli"
 version = "0.1.0"
 description = "Personal accounting for bank and credit card accounts, stored in CountAbout CSV format"
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ dependencies = ["PySide6>=6.6"]
 test = ["pytest"]
 
 [project.gui-scripts]
-vibeacct = "vibeacct.gui:main"
+pacioli = "pacioli.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

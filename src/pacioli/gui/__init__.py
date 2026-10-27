@@ -41,7 +41,7 @@ TITLE_MAX = 30  # longest account list shown over the register, including the ".
 class MainWindow(QMainWindow):
     def __init__(self, path=None):
         super().__init__()
-        self.settings = QSettings("vibeacct", "vibeacct")
+        self.settings = QSettings("pacioli", "pacioli")
         self.ledger = None
         self.balances = {}  # {account: (balance as of today, cleared balance)}
         self.accounts = []  # selected account names; empty means all accounts
@@ -300,7 +300,7 @@ class MainWindow(QMainWindow):
     def update_title(self):
         name = os.path.basename(self.ledger.path) if self.ledger and self.ledger.path else "(no file)"
         dirty = "*" if self.ledger and self.ledger.dirty else ""
-        self.setWindowTitle(f"{dirty}{name} — vibeacct")
+        self.setWindowTitle(f"{dirty}{name} — pacioli")
         names = ", ".join(self.accounts) or ALL_ACCOUNTS
         short = names if len(names) <= TITLE_MAX else names[: TITLE_MAX - 3] + "..."
         self.title.setText(short)
@@ -404,7 +404,7 @@ class MainWindow(QMainWindow):
 
     def need_ledger(self):
         if self.ledger is None:
-            QMessageBox.information(self, "vibeacct", "Open a ledger CSV first (File → Open).")
+            QMessageBox.information(self, "pacioli", "Open a ledger CSV first (File → Open).")
             return False
         return True
 
@@ -545,7 +545,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("vibeacct")
+    app.setApplicationName("pacioli")
     win = MainWindow(sys.argv[1] if len(sys.argv) > 1 else None)
     win.show()
     sys.exit(app.exec())

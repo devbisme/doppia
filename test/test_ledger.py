@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from vibeacct.importer import Profile, apply_candidates, build_candidates, parse_money
-from vibeacct.ledger import COLUMNS, Ledger, Transaction
+from pacioli.importer import Profile, apply_candidates, build_candidates, parse_money
+from pacioli.ledger import COLUMNS, Ledger, Transaction
 
 HEADER = 'Account,Date,Description,Category,Split,"Split ID",Amount,Ref,Memo,Tags,Cleared\n'
 SAMPLE = HEADER + (
@@ -111,7 +111,7 @@ def test_account_balances_matches_balance(ledger):
 
 
 def test_report_export_formats():
-    from vibeacct import export
+    from pacioli import export
 
     headers = ["Category", "Total", "Count"]
     rows = [["Food | Dining", Decimal("-1234.5"), 3], ["— Net", Decimal("10"), ""]]

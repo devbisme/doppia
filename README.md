@@ -1,4 +1,4 @@
-# vibeacct
+# pacioli
 
 Personal accounting for bank and credit card accounts (PySide6 desktop GUI).
 Data lives in a single CSV in CountAbout export format; files are written back
@@ -7,7 +7,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 ## Run
 
     uv venv .venv && uv pip install --python .venv/bin/python -e '.[test]'
-    .venv/bin/vibeacct path/to/countabout-export.csv     # reopens last file if omitted
+    .venv/bin/pacioli path/to/countabout-export.csv     # reopens last file if omitted
     .venv/bin/python -m pytest
 
 ## Features
@@ -44,7 +44,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Transfers use CountAbout's `{Account}` category; the mirror row in the other account
   is created/updated/deleted automatically (matched by date and negated amount).
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
-  `~/.config/vibeacct/import_profiles.json`; payee/category matched from history;
+  `~/.config/pacioli/import_profiles.json`; payee/category matched from history;
   duplicates (same amount within 3 days) unchecked by default; imported rows marked cleared.
 - Reconcile (Ctrl+R) against a statement ending balance: check off uncleared
   transactions until the difference is $0.00.

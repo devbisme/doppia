@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from .ledger import Transaction
 
 PROFILE_PATH = os.path.join(
-    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "vibeacct", "import_profiles.json"
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "pacioli", "import_profiles.json"
 )
 DATE_FORMATS = ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%d/%m/%Y", "%b %d, %Y", "%Y/%m/%d"]
 DUPLICATE_WINDOW_DAYS = 3
