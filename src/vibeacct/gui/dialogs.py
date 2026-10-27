@@ -537,7 +537,7 @@ class SortItem(QTableWidgetItem):
 
 
 class ReportDialog(QDialog):
-    """Category totals or month-by-category totals. Transfers are excluded."""
+    """Category totals or month-by-category totals. Transfers are excluded unless asked for."""
 
     MODES = ["Spending & income by category", "Category by month", "Income vs. expense by month"]
 
@@ -594,6 +594,12 @@ class ReportDialog(QDialog):
         save.clicked.connect(self.save_report)
         self.cat_selection = None  # set of category labels picked from the table, or None for all
         self.selection_note = QLabel()
+        self.include_transfers = QCheckBox("Include transfers")
+        self.include_transfers.setToolTip(
+            "Count transfers between accounts, under a category named for the other account.\n"
+            "A transfer between two checked accounts appears on both sides and nets to zero."
+        )
+        self.include_transfers.toggled.connect(self.run)
         self.table = QTableWidget()
         keep_colors_when_selected(self.table)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -611,6 +617,7 @@ class ReportDialog(QDialog):
         ):
             controls.addWidget(QLabel(label))
             controls.addWidget(w)
+        controls.addWidget(self.include_transfers)
         controls.addWidget(run)
         controls.addWidget(show_all)
         controls.addStretch()
@@ -648,7 +655,7 @@ class ReportDialog(QDialog):
             for t in self.ledger.transactions
             if t.account in accts
             and lo <= t.date <= hi
-            and t.transfer_account is None
+            and (t.transfer_account is None or self.include_transfers.isChecked())
             and (pattern is None or pattern.search(self.cat_name(t)))
             and (self.cat_selection is None or self.cat_name(t) in self.cat_selection)
         ]
@@ -686,6 +693,8 @@ class ReportDialog(QDialog):
     def cat_name(t):
         if t.is_split:
             return "(split – details unavailable)"
+        if t.transfer_account is not None:
+            return f"Transfer: {t.transfer_account}"
         return t.category or "(uncategorized)"
 
     def report_notes(self):
@@ -700,7 +709,7 @@ class ReportDialog(QDialog):
             notes.append(f"Categories matching: {self.cat_regex.text()}")
         if self.cat_selection is not None:
             notes.append("Only categories: " + ", ".join(sorted(self.cat_selection, key=str.lower)))
-        notes.append("Transfers excluded")
+        notes.append("Transfers included" if self.include_transfers.isChecked() else "Transfers excluded")
         return notes
 
     def table_contents(self):

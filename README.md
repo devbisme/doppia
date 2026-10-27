@@ -37,7 +37,10 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Reconcile (Ctrl+R) against a statement ending balance: check off uncleared
   transactions until the difference is $0.00.
 - Reports (Ctrl+P): totals by category, category by month, income vs. expense by month.
-  Transfers are excluded. Click a column header to sort.
+  Click a column header to sort.
+  - Transfers are excluded unless **Include transfers** is checked. Then each transfer is
+    reported under `Transfer: <other account>`. A transfer between two checked accounts appears
+    on both sides, so it adds to both income and expense while netting to zero.
   - **All accounts on/off** checks or unchecks every account in the account list.
   - **Categories** field: a case-insensitive regular expression matched anywhere in the
     category name (e.g. `^(groceries|dining)$`). Press Enter or Run to apply; the X button
