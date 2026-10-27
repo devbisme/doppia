@@ -108,3 +108,16 @@ def test_account_balances_matches_balance(ledger):
     for acct, (bal, clr) in ledger.account_balances(as_of=today).items():
         assert bal == ledger.balance(acct, as_of=today)
         assert clr == ledger.balance(acct, cleared_only=True)
+
+
+def test_report_export_formats():
+    from vibeacct import export
+
+    headers = ["Category", "Total", "Count"]
+    rows = [["Food | Dining", Decimal("-1234.5"), 3], ["— Net", Decimal("10"), ""]]
+    assert export.to_csv(headers, rows) == "Category,Total,Count\nFood | Dining,-1234.50,3\n— Net,10.00,\n"
+    md = export.to_markdown("Report", ["Dates: x"], headers, rows)
+    assert "|---|---:|---|" in md
+    assert "| Food \\| Dining | -$1,234.50 | 3 |" in md
+    page = export.to_html("Report", [], headers, rows, total_prefix="— ")
+    assert "-$1,234.50" in page and 'style="font-weight:bold"' in page

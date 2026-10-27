@@ -1,12 +1,13 @@
 """Dialogs: transaction editor, bank CSV import, reconciliation, reports."""
 
 import datetime as dt
+import os
 import re
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
-from PySide6.QtCore import QDate, Qt
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtCore import QDate, QMarginsF, Qt
+from PySide6.QtGui import QDoubleValidator, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .. import importer
+from .. import export, importer
 from ..ledger import SPLIT_CATEGORY, Transaction, transfer_category
 from .models import keep_colors_when_selected, money, money_color, money_html
 
@@ -58,6 +59,7 @@ def parse_amount(text):
 def money_item(value):
     """Right-aligned, red/green table cell for a monetary amount that sorts numerically."""
     item = SortItem(money(value), float(value))
+    item.value = value  # exact amount, for exporting
     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
     if value:
         item.setForeground(money_color(value))
@@ -587,6 +589,9 @@ class ReportDialog(QDialog):
         show_all = QPushButton("Show all categories")
         show_all.setToolTip("Clear the category selection and regular expression, then rerun")
         show_all.clicked.connect(self.show_all_categories)
+        save = QPushButton("Save…")
+        save.setToolTip("Save the report as CSV, Markdown, or PDF")
+        save.clicked.connect(self.save_report)
         self.cat_selection = None  # set of category labels picked from the table, or None for all
         self.selection_note = QLabel()
         self.table = QTableWidget()
@@ -609,6 +614,7 @@ class ReportDialog(QDialog):
         controls.addWidget(run)
         controls.addWidget(show_all)
         controls.addStretch()
+        controls.addWidget(save)
         notes = QHBoxLayout()
         notes.addWidget(self.selection_note)
         notes.addWidget(self.regex_error)
@@ -681,6 +687,76 @@ class ReportDialog(QDialog):
         if t.is_split:
             return "(split – details unavailable)"
         return t.category or "(uncategorized)"
+
+    def report_notes(self):
+        """Description of the report's settings, for saved files."""
+        accts = [self.accounts.item(i).text() for i in range(self.accounts.count())]
+        checked = [a for i, a in enumerate(accts) if self.accounts.item(i).checkState() == Qt.Checked]
+        notes = [
+            f"Dates: {self.start.date().toString('MM-dd-yyyy')} to {self.end.date().toString('MM-dd-yyyy')}",
+            "Accounts: " + ("all" if len(checked) == len(accts) else ", ".join(checked) or "none"),
+        ]
+        if self.cat_regex.text() and not self.regex_error.text():
+            notes.append(f"Categories matching: {self.cat_regex.text()}")
+        if self.cat_selection is not None:
+            notes.append("Only categories: " + ", ".join(sorted(self.cat_selection, key=str.lower)))
+        notes.append("Transfers excluded")
+        return notes
+
+    def table_contents(self):
+        """Headers and rows as shown (in the current sort order); amounts as Decimal."""
+        t = self.table
+        headers = [t.horizontalHeaderItem(c).text() for c in range(t.columnCount())]
+        rows = []
+        for r in range(t.rowCount()):
+            row = []
+            for c in range(t.columnCount()):
+                item = t.item(r, c)
+                if item is None:
+                    row.append("")
+                elif hasattr(item, "value"):
+                    row.append(item.value)
+                else:  # counts sort (and export) as int
+                    row.append(item.key if isinstance(getattr(item, "key", None), int) else item.text())
+            rows.append(row)
+        return headers, rows
+
+    def save_report(self):
+        path, chosen = QFileDialog.getSaveFileName(
+            self, "Save report", "", "CSV (*.csv);;Markdown (*.md);;PDF (*.pdf)"
+        )
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".csv", ".md", ".pdf"):
+            ext = "." + chosen.split("*.")[1].rstrip(")")
+            path += ext
+        title = self.mode.currentText()
+        notes = self.report_notes()
+        headers, rows = self.table_contents()
+        try:
+            if ext == ".pdf":
+                # Month-by-category tables are wide: landscape and a smaller font so columns fit.
+                wide = len(headers) > 4
+                page = export.to_html(title, notes, headers, rows, TOTAL_PREFIX, font_pt=7 if wide else 9)
+                self.write_pdf(path, page, landscape=wide)
+            else:
+                text = export.to_csv(headers, rows) if ext == ".csv" else export.to_markdown(title, notes, headers, rows)
+                with open(path, "w", newline="") as f:
+                    f.write(text)
+        except OSError as e:
+            QMessageBox.warning(self, "Save report", f"Could not save {path}:\n{e}")
+
+    @staticmethod
+    def write_pdf(path, html_text, landscape=False):
+        open(path, "wb").close()  # QPdfWriter fails silently; this raises OSError if unwritable
+        writer = QPdfWriter(path)
+        writer.setPageSize(QPageSize(QPageSize.Letter))
+        writer.setPageOrientation(QPageLayout.Landscape if landscape else QPageLayout.Portrait)
+        writer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Millimeter)
+        doc = QTextDocument()
+        doc.setHtml(html_text)
+        doc.print_(writer)
 
     def fill(self, headers, rows):
         self.table.setSortingEnabled(False)

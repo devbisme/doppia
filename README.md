@@ -46,6 +46,10 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
     restriction persists across runs until **Show all categories** clears it (along with
     the regex). Run uses whatever rows are highlighted when pressed.
   - Total income, expense, and net rows reflect only the categories shown.
+  - **Save…** writes the report as shown (current sort order) to CSV (plain signed numbers for
+    spreadsheets), Markdown, or PDF. Markdown and PDF include the report settings (dates,
+    accounts, category filters) and show amounts with a minus sign, since they may be printed
+    without color. Wide month-by-category reports print landscape in a smaller font.
 - View → Font… sets the font family, style (regular/italic/bold), and size for the whole
   app; the choice is remembered. View → Reset font returns to the system default.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
