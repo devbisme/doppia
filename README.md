@@ -62,7 +62,7 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
     the regex). Run uses whatever rows are highlighted when pressed.
   - Total income, expense, and net rows reflect only the categories shown.
   - **Save…** writes the report as shown (current sort order) to CSV (plain signed numbers for
-    spreadsheets), Markdown, or PDF. Markdown and PDF include the report settings (dates,
+    spreadsheets), Markdown, plain text (aligned columns), or PDF. Markdown, text, and PDF include the report settings (dates,
     accounts, category filters) and show amounts with a minus sign, since they may be printed
     without color. Wide month-by-category reports print landscape in a smaller font.
 - View → Font… sets the font family, style (regular/italic/bold), and size for the whole

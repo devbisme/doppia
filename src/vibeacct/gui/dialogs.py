@@ -590,7 +590,7 @@ class ReportDialog(QDialog):
         show_all.setToolTip("Clear the category selection and regular expression, then rerun")
         show_all.clicked.connect(self.show_all_categories)
         save = QPushButton("Save…")
-        save.setToolTip("Save the report as CSV, Markdown, or PDF")
+        save.setToolTip("Save the report as CSV, Markdown, text, or PDF")
         save.clicked.connect(self.save_report)
         self.cat_selection = None  # set of category labels picked from the table, or None for all
         self.selection_note = QLabel()
@@ -732,12 +732,12 @@ class ReportDialog(QDialog):
 
     def save_report(self):
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Save report", "", "CSV (*.csv);;Markdown (*.md);;PDF (*.pdf)"
+            self, "Save report", "", "CSV (*.csv);;Markdown (*.md);;Text (*.txt);;PDF (*.pdf)"
         )
         if not path:
             return
         ext = os.path.splitext(path)[1].lower()
-        if ext not in (".csv", ".md", ".pdf"):
+        if ext not in (".csv", ".md", ".txt", ".pdf"):
             ext = "." + chosen.split("*.")[1].rstrip(")")
             path += ext
         title = self.mode.currentText()
@@ -750,7 +750,12 @@ class ReportDialog(QDialog):
                 page = export.to_html(title, notes, headers, rows, TOTAL_PREFIX, font_pt=7 if wide else 9)
                 self.write_pdf(path, page, landscape=wide)
             else:
-                text = export.to_csv(headers, rows) if ext == ".csv" else export.to_markdown(title, notes, headers, rows)
+                if ext == ".csv":
+                    text = export.to_csv(headers, rows)
+                elif ext == ".txt":
+                    text = export.to_text(title, notes, headers, rows)
+                else:
+                    text = export.to_markdown(title, notes, headers, rows)
                 with open(path, "w", newline="") as f:
                     f.write(text)
         except OSError as e:

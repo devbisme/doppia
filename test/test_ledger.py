@@ -119,6 +119,12 @@ def test_report_export_formats():
     md = export.to_markdown("Report", ["Dates: x"], headers, rows)
     assert "|---|---:|---|" in md
     assert "| Food \\| Dining | -$1,234.50 | 3 |" in md
+    assert export.to_text("Report", ["Dates: x"], headers, rows).splitlines()[5:] == [
+        "Category            Total  Count",
+        "-------------  ----------  -----",
+        "Food | Dining  -$1,234.50      3",
+        "— Net              $10.00",
+    ]
     page = export.to_html("Report", [], headers, rows, total_prefix="— ")
     assert "-$1,234.50" in page and 'style="font-weight:bold"' in page
 

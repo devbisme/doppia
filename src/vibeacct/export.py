@@ -1,4 +1,4 @@
-"""Render a report (title, notes, headers, rows) as CSV, Markdown, or HTML (for PDF).
+"""Render a report (title, notes, headers, rows) as CSV, Markdown, plain text, or HTML (for PDF).
 
 Row values are str, int, or Decimal; Decimals are monetary amounts.
 """
@@ -39,6 +39,20 @@ def to_markdown(title, notes, headers, rows):
     lines.append("|" + "|".join("---:" if c in money_cols else "---" for c in range(len(headers))) + "|")
     for row in rows:
         lines.append("| " + " | ".join(_md_cell(_money(v) if isinstance(v, Decimal) else v) for v in row) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def to_text(title, notes, headers, rows):
+    """Fixed-width columns: amounts and counts right-aligned, other text left-aligned."""
+    cells = [[_money(v) if isinstance(v, Decimal) else str(v) for v in row] for row in rows]
+    right = {c for row in rows for c, v in enumerate(row) if isinstance(v, (Decimal, int))}
+    widths = [max([len(h)] + [len(row[c]) for row in cells]) for c, h in enumerate(headers)]
+
+    def line(values):
+        return "  ".join(v.rjust(w) if c in right else v.ljust(w) for c, (v, w) in enumerate(zip(values, widths))).rstrip()
+
+    lines = [title, "=" * len(title), ""] + notes + ["", line(headers), line(["-" * w for w in widths])]
+    lines += [line(row) for row in cells]
     return "\n".join(lines) + "\n"
 
 
