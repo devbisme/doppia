@@ -123,6 +123,8 @@ class Candidate:
     duplicate_of: Transaction = None
     include: bool = True
     error: str = ""
+    note: str = ""  # extra status shown in the preview, e.g. a warning to check the row
+    pending: bool = False  # not yet posted by the bank, so not marked cleared on import
 
 
 @dataclass
@@ -202,7 +204,7 @@ def apply_candidates(ledger, candidates, mark_cleared=True):
     n = 0
     for c in candidates:
         if c.include and not c.error:
-            c.txn.is_cleared = mark_cleared
+            c.txn.is_cleared = mark_cleared and not c.pending
             ledger.add(c.txn)
             n += 1
         elif c.duplicate_of is not None and mark_cleared and not c.duplicate_of.is_cleared:

@@ -157,3 +157,58 @@ def test_search_and_replace():
     assert Ledger.replacement_problem("memo", "a", "a")
     assert Ledger.replacement_problem("memo", "a", "a\nb")
     assert Ledger.replacement_problem("category", "Shopping", "Retail") is None
+
+
+def test_llm_rows_and_checks(monkeypatch):
+    import json
+
+    from pacioli import llm
+
+    reply = {
+        "done_reason": "stop",
+        "message": {
+            "content": json.dumps(
+                {
+                    "transactions": [
+                        {"date": "2026-10-24", "description": " INGLES #42 ", "amount": -87.65, "ref": "", "pending": False},
+                        {"date": "2026-10-25", "description": "SHELL", "amount": -45.1, "ref": "", "pending": True},
+                    ]
+                }
+            )
+        },
+    }
+    monkeypatch.setattr(llm, "_request", lambda path, body=None, timeout=10: reply)
+    rows = llm.extract_transactions("text", "Checking", dt.date(2026, 10, 27))
+    assert rows == [
+        {"date": "2026-10-24", "description": "INGLES #42", "amount": "-87.65", "ref": "", "pending": ""},
+        {"date": "2026-10-25", "description": "SHELL", "amount": "-45.10", "pending": "1", "ref": ""},
+    ]
+    # Rows feed the CSV importer's pipeline; pending rows aren't marked cleared.
+    led = Ledger([Transaction("Checking", "10-23-2026", "Ingles", "Groceries", amount_str="-87.65")])
+    cands = build_candidates(led, "Checking", rows, llm.LLM_PROFILE)
+    assert cands[0].duplicate_of is led.transactions[0] and not cands[0].include
+    cands[1].pending = True
+    assert apply_candidates(led, cands) == 1
+    assert led.transactions[0].description == "SHELL" and not led.transactions[0].is_cleared
+
+    reply["done_reason"] = "length"
+    with pytest.raises(llm.LLMError, match="cut off"):
+        llm.extract_transactions("text", "Checking", dt.date(2026, 10, 27))
+    reply.update(done_reason="stop", message={"content": ""})
+    with pytest.raises(llm.LLMError, match="usable JSON"):
+        llm.extract_transactions("text", "Checking", dt.date(2026, 10, 27))
+
+    text = "Oct 9 PAYMENT -1,250.00\nOct 10 FEE $112.50 10/05\nDEP $3,000"
+    assert llm.amount_in_text(Decimal("1250.00"), text)
+    assert llm.amount_in_text(Decimal("-112.50"), text)
+    assert llm.amount_in_text(Decimal("3000.00"), text)
+    assert not llm.amount_in_text(Decimal("12.50"), text)  # only inside 112.50
+    assert not llm.amount_in_text(Decimal("125.00"), text)
+
+
+def test_llm_unreachable(monkeypatch):
+    from pacioli import llm
+
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:9")  # discard port: nothing listens
+    with pytest.raises(llm.LLMError, match="Could not reach Ollama"):
+        llm.list_models()

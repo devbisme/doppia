@@ -6,10 +6,11 @@ import re
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
-from PySide6.QtCore import QDate, QMarginsF, Qt
+from PySide6.QtCore import QDate, QMarginsF, Qt, QThread, Signal
 from PySide6.QtGui import QDoubleValidator, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QCompleter,
@@ -27,13 +28,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
-from .. import export, importer
+from .. import export, importer, llm
 from ..ledger import SEARCH_FIELDS, SPLIT_CATEGORY, Transaction, transfer_category
 from .models import FUTURE_COLOR, keep_colors_when_selected, money, money_color, money_html
 
@@ -205,6 +207,72 @@ class TransactionDialog(QDialog):
 # --------------------------------------------------------------------------- import
 
 
+class CandidateTable(QTableWidget):
+    """Preview of transactions to import: include checkbox, editable description and category,
+    and a status column (new / likely duplicate / error, plus any candidate note)."""
+
+    P_INC, P_DATE, P_BANK, P_DESC, P_CAT, P_AMT, P_STATUS = range(7)
+
+    def __init__(self, parent=None):
+        super().__init__(0, 7, parent)
+        keep_colors_when_selected(self)
+        self.setHorizontalHeaderLabels(["Import", "Date", "Bank text", "Description", "Category", "Amount", "Status"])
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.candidates = []
+
+    def fill(self, ledger, candidates):
+        self.candidates = candidates
+        cats = category_choices(ledger)
+        self.setRowCount(len(candidates))
+        for r, c in enumerate(candidates):
+            inc = QTableWidgetItem()
+            inc.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            inc.setCheckState(Qt.Checked if c.include else Qt.Unchecked)
+            self.setItem(r, self.P_INC, inc)
+            for col, item in (
+                (self.P_DATE, QTableWidgetItem(c.txn.date_str)),
+                (self.P_BANK, QTableWidgetItem(c.bank_text)),
+                (self.P_AMT, money_item(c.txn.amount)),
+            ):
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self.setItem(r, col, item)
+            self.setItem(r, self.P_DESC, QTableWidgetItem(c.txn.description))
+            self.setCellWidget(r, self.P_CAT, editable_combo(cats, c.txn.category))
+            if c.error:
+                status = f"Error: {c.error}"
+            elif c.duplicate_of is not None:
+                d = c.duplicate_of
+                status = f"Likely duplicate of {d.date_str} {d.description} {money(d.amount, signed=True)}"
+            else:
+                status = "New"
+            if c.note:
+                status += f" ({c.note})"
+            st = QTableWidgetItem(status)
+            st.setFlags(Qt.ItemIsEnabled)
+            self.setItem(r, self.P_STATUS, st)
+        self.resizeColumnsToContents()
+        self.setColumnWidth(self.P_CAT, 200)
+
+    def summary(self):
+        cands = self.candidates
+        new = sum(c.include for c in cands)
+        dup = sum(c.duplicate_of is not None for c in cands)
+        err = sum(bool(c.error) for c in cands)
+        return f"{len(cands)} rows: {new} checked, {dup} likely duplicates, {err} errors"
+
+    def collect(self, ledger):
+        """Copy the user's edits back into the candidates. Returns an error message, or None."""
+        for r, c in enumerate(self.candidates):
+            c.include = self.item(r, self.P_INC).checkState() == Qt.Checked and not c.error
+            c.txn.description = self.item(r, self.P_DESC).text().strip()
+            c.txn.category = self.cellWidget(r, self.P_CAT).currentText().strip()
+            tgt = c.txn.transfer_account
+            if c.include and tgt is not None and (tgt not in ledger.accounts() or tgt == c.txn.account):
+                return f"Row {r + 1}: invalid transfer account {tgt!r}."
+        return None
+
+
 class ImportDialog(QDialog):
     """Map a bank CSV's columns, preview with auto-categorization and duplicate flags, then import."""
 
@@ -217,8 +285,6 @@ class ImportDialog(QDialog):
         ("memo_col", "Memo column"),
         ("ref_col", "Ref/Check column"),
     ]
-    P_INC, P_DATE, P_BANK, P_DESC, P_CAT, P_AMT, P_STATUS = range(7)
-
     def __init__(self, ledger, account=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Import Bank CSV")
@@ -260,11 +326,7 @@ class ImportDialog(QDialog):
         preview_btn = QPushButton("Preview")
         preview_btn.clicked.connect(self.preview)
 
-        self.table = QTableWidget(0, 7)
-        keep_colors_when_selected(self.table)
-        self.table.setHorizontalHeaderLabels(["Import", "Date", "Bank text", "Description", "Category", "Amount", "Status"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table = CandidateTable()
         self.summary = QLabel()
 
         top = QHBoxLayout()
@@ -355,52 +417,173 @@ class ImportDialog(QDialog):
             QMessageBox.information(self, "Import", "Map the date, description, and amount (or debit/credit) columns.")
             return
         self.candidates = importer.build_candidates(self.ledger, self.account.currentText(), self.rows, p)
-        cats = category_choices(self.ledger)
-        self.table.setRowCount(len(self.candidates))
-        for r, c in enumerate(self.candidates):
-            inc = QTableWidgetItem()
-            inc.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            inc.setCheckState(Qt.Checked if c.include else Qt.Unchecked)
-            self.table.setItem(r, self.P_INC, inc)
-            for col, item in (
-                (self.P_DATE, QTableWidgetItem(c.txn.date_str)),
-                (self.P_BANK, QTableWidgetItem(c.bank_text)),
-                (self.P_AMT, money_item(c.txn.amount)),
-            ):
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                self.table.setItem(r, col, item)
-            self.table.setItem(r, self.P_DESC, QTableWidgetItem(c.txn.description))
-            self.table.setCellWidget(r, self.P_CAT, editable_combo(cats, c.txn.category))
-            if c.error:
-                status = f"Error: {c.error}"
-            elif c.duplicate_of is not None:
-                d = c.duplicate_of
-                status = f"Likely duplicate of {d.date_str} {d.description} {money(d.amount, signed=True)}"
-            else:
-                status = "New"
-            st = QTableWidgetItem(status)
-            st.setFlags(Qt.ItemIsEnabled)
-            self.table.setItem(r, self.P_STATUS, st)
-        self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(self.P_CAT, 200)
-        new = sum(c.include for c in self.candidates)
-        dup = sum(c.duplicate_of is not None for c in self.candidates)
-        err = sum(bool(c.error) for c in self.candidates)
-        self.summary.setText(f"{len(self.candidates)} rows: {new} new, {dup} likely duplicates, {err} errors")
+        self.table.fill(self.ledger, self.candidates)
+        self.summary.setText(self.table.summary())
 
     def accept(self):
         if not self.candidates:
             QMessageBox.information(self, "Import", "Nothing to import. Choose a file and preview first.")
             return
-        for r, c in enumerate(self.candidates):
-            c.include = self.table.item(r, self.P_INC).checkState() == Qt.Checked and not c.error
-            c.txn.description = self.table.item(r, self.P_DESC).text().strip()
-            c.txn.category = self.table.cellWidget(r, self.P_CAT).currentText().strip()
-            tgt = c.txn.transfer_account
-            if c.include and tgt is not None and (tgt not in self.ledger.accounts() or tgt == c.txn.account):
-                QMessageBox.warning(self, "Import", f"Row {r + 1}: invalid transfer account {tgt!r}.")
-                return
+        error = self.table.collect(self.ledger)
+        if error:
+            QMessageBox.warning(self, "Import", error)
+            return
         self.imported = importer.apply_candidates(self.ledger, self.candidates)
+        super().accept()
+
+
+class LLMWorker(QThread):
+    """Runs llm.extract_transactions off the GUI thread. Emits (rows, "") or (None, error)."""
+
+    done = Signal(object, str)
+    running = set()  # keeps workers alive if their dialog closes before they finish
+
+    def __init__(self, text, account, model):
+        super().__init__()
+        self.text, self.account, self.model = text, account, model
+        LLMWorker.running.add(self)
+        self.finished.connect(lambda: LLMWorker.running.discard(self))
+
+    def run(self):
+        try:
+            self.done.emit(llm.extract_transactions(self.text, self.account, dt.date.today(), self.model), "")
+        except llm.LLMError as e:
+            self.done.emit(None, str(e))
+
+
+class ClipboardImportDialog(QDialog):
+    """Parse text copied from a bank or card website into transactions with a local LLM,
+    then preview them (duplicates removed) for selective import."""
+
+    def __init__(self, ledger, account, settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Import from clipboard")
+        self.ledger, self.settings = ledger, settings
+        self.rows, self.candidates, self.worker = [], [], None
+        self.imported = 0
+
+        self.account = QComboBox()
+        self.account.addItems(ledger.accounts())
+        if account:
+            self.account.setCurrentText(account)
+        self.account.currentTextChanged.connect(self.rebuild)
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setToolTip("Ollama model used to read the text")
+        self.model.setMinimumWidth(220)
+        self.parse_btn = QPushButton("Parse")
+        self.parse_btn.clicked.connect(self.parse)
+        self.text = QPlainTextEdit(QApplication.clipboard().text())
+        self.text.setPlaceholderText("Copy transactions from your bank's website, then paste them here.")
+        self.text.setMaximumHeight(160)
+        self.flip = QCheckBox("Flip signs")
+        self.flip.setToolTip("Reverse every amount, if the model got deposits and charges backwards")
+        self.flip.toggled.connect(self.rebuild)
+        self.show_dups = QCheckBox("Show likely duplicates")
+        self.show_dups.setToolTip("Duplicates of transactions already in the account are removed from the list")
+        self.show_dups.toggled.connect(self.hide_duplicates)
+        self.cleared = QCheckBox("Mark imported transactions cleared")
+        self.cleared.setToolTip("Pending transactions are never marked cleared")
+        self.cleared.setChecked(True)
+        self.table = CandidateTable()
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Into account"))
+        top.addWidget(self.account, 1)
+        top.addWidget(QLabel("Model"))
+        top.addWidget(self.model, 1)
+        top.addWidget(self.parse_btn)
+        opts = QHBoxLayout()
+        opts.addWidget(self.flip)
+        opts.addWidget(self.show_dups)
+        opts.addWidget(self.cleared)
+        opts.addStretch()
+        buttons = QDialogButtonBox()
+        self.import_btn = buttons.addButton("Import checked", QDialogButtonBox.AcceptRole)
+        buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(top)
+        lay.addWidget(self.text)
+        lay.addLayout(opts)
+        lay.addWidget(self.table, 1)
+        lay.addWidget(self.status)
+        lay.addWidget(buttons)
+        self.resize(1100, 700)
+        self.load_models()
+
+    def load_models(self):
+        saved = self.settings.value("llm_model") or llm.DEFAULT_MODEL
+        try:
+            self.model.addItems(llm.list_models())
+        except llm.LLMError as e:
+            self.status.setText(str(e))
+        self.model.setCurrentText(saved)
+
+    def parse(self):
+        text = self.text.toPlainText().strip()
+        if not text:
+            self.status.setText("Nothing to parse: copy some transactions and paste them above.")
+            return
+        model = self.model.currentText().strip()
+        self.settings.setValue("llm_model", model)
+        self.parse_btn.setEnabled(False)
+        self.import_btn.setEnabled(False)
+        self.status.setText(f"Reading the text with {model}… (the first run loads the model and can take a minute)")
+        self.worker = LLMWorker(text, self.account.currentText(), model)
+        self.worker.done.connect(self.parsed)
+        self.worker.start()
+
+    def parsed(self, rows, error):
+        self.parse_btn.setEnabled(True)
+        self.import_btn.setEnabled(True)
+        if error:
+            self.status.setText(f'<span style="color: rgb(190, 30, 30)">{error}</span>')
+            return
+        self.rows = rows
+        self.rebuild()
+
+    def rebuild(self):
+        """Turn the model's rows into candidates for the chosen account (cheap; no LLM call)."""
+        if not self.rows:
+            return
+        profile = importer.Profile(**{**vars(llm.LLM_PROFILE), "negate": self.flip.isChecked()})
+        self.candidates = importer.build_candidates(self.ledger, self.account.currentText(), self.rows, profile)
+        text = self.text.toPlainText()
+        for row, c in zip(self.rows, self.candidates):
+            c.pending = bool(row["pending"])
+            notes = ["pending"] if c.pending else []
+            if not c.error and not llm.amount_in_text(c.txn.amount, text):
+                c.include = False
+                notes.append("amount not found in the pasted text; check it")
+            c.note = "; ".join(notes)
+        self.table.fill(self.ledger, self.candidates)
+        self.hide_duplicates()
+
+    def hide_duplicates(self):
+        show = self.show_dups.isChecked()
+        hidden = 0
+        for r, c in enumerate(self.candidates):
+            hide = c.duplicate_of is not None and not show
+            self.table.setRowHidden(r, hide)
+            hidden += hide
+        msg = self.table.summary()
+        if hidden:
+            msg += f" ({hidden} duplicates hidden)"
+        self.status.setText(msg)
+
+    def accept(self):
+        if not self.candidates:
+            QMessageBox.information(self, "Import", "Nothing to import yet: press Parse first.")
+            return
+        error = self.table.collect(self.ledger)
+        if error:
+            QMessageBox.warning(self, "Import", error)
+            return
+        self.imported = importer.apply_candidates(self.ledger, self.candidates, self.cleared.isChecked())
         super().accept()
 
 

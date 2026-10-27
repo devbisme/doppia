@@ -46,6 +46,19 @@ byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbo
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
   `~/.config/pacioli/import_profiles.json`; payee/category matched from history;
   duplicates (same amount within 3 days) unchecked by default; imported rows marked cleared.
+- Import from clipboard (File menu, Ctrl+Shift+V): copy transactions from a bank or card
+  website or statement, and a local LLM served by [Ollama](https://ollama.com) turns the text
+  into transactions for the chosen account (the active one by default). Nothing leaves your
+  machine. The text is shown for editing; press **Parse** (about 15–30 s on an RTX 3060).
+  - Model: any installed Ollama model, remembered between runs. Default `gemma4:12b-it-qat`,
+    which read sample bank and card text correctly; smaller models got dates and signs wrong.
+    Set `OLLAMA_HOST` if Ollama isn't at `localhost:11434`.
+  - Likely duplicates of existing transactions (same amount within 3 days) are removed from the
+    list; **Show likely duplicates** brings them back, unchecked. Payees and categories are
+    matched from history, as in CSV import.
+  - Review before importing: amounts the model returns that don't appear in the pasted text
+    are unchecked and flagged, and **Flip signs** fixes deposits/charges read backwards.
+  - Imported rows are marked cleared (optional) except ones shown as pending.
 - Reconcile (Ctrl+R) against a statement ending balance: check off uncleared
   transactions until the difference is $0.00.
 - Reports (Ctrl+P): totals by category, category by month, income vs. expense by month.

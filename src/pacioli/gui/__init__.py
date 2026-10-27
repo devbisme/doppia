@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..ledger import Ledger
-from .dialogs import ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
+from .dialogs import ClipboardImportDialog, ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
 from .models import PaddedDelegate, RegisterFilter, RegisterModel, keep_colors_when_selected, money, money_color
 
 ALL_ACCOUNTS = "All accounts"
@@ -148,6 +148,7 @@ class MainWindow(QMainWindow):
         act(m, "Save &As…", self.save_as, QKeySequence.SaveAs)
         m.addSeparator()
         act(m, "&Import bank CSV…", self.import_csv, "Ctrl+I")
+        act(m, "Import from &clipboard (local LLM)…", self.import_clipboard, "Ctrl+Shift+V")
         m.addSeparator()
         act(m, "&Quit", self.close, QKeySequence.Quit)
 
@@ -539,6 +540,14 @@ class MainWindow(QMainWindow):
             return
         dlg = ImportDialog(self.ledger, self.account, self)
         if dlg.exec():
+            self.statusBar().showMessage(f"Imported {dlg.imported} transactions", 5000)
+            self.changed()
+
+    def import_clipboard(self):
+        if not self.need_ledger():
+            return
+        dlg = ClipboardImportDialog(self.ledger, self.account, self.settings, self)
+        if dlg.exec() and dlg.imported:
             self.statusBar().showMessage(f"Imported {dlg.imported} transactions", 5000)
             self.changed()
 
