@@ -1,8 +1,23 @@
 # doppia
 
-Personal accounting for bank and credit card accounts (PySide6 desktop GUI).
-Data lives in a single CSV in CountAbout export format; files are written back
-byte-for-byte compatible (unchanged rows are untouched, quoting matches CountAbout).
+Doppia is a personal accounting program.
+I used to use Quicken, but then I moved to Linux and had to run it in a Windows VM.
+After a few years of that and all the nagging to update, I moved to [Countabout](https://countabout.com/).
+Its web interface let me use it anywhere, but it was tedious to login and enter transactions.
+And it cost an extra $35/year if I wanted to sync transactions from my bank/credit accounts.
+
+So I built Doppia. With Claude. In a couple of hours.
+
+Doppia has the following advantages:
+
+* It's multi-OS (it's a Python app so it runs on Windows or Linux and -maybe- MacOS).
+* It's local (data is kept in readable CSV files).
+* It's less effort (copy-paste multiple transactions directly from account webpages).
+* It's fast (well, faster than going through a web interface).
+* It's free (MIT license, no subscriptions, no nothing).
+* It's adaptable (just ask Claude and get new features).
+
+That's all for me. Now on to the AI-speak...
 
 ## The name
 
