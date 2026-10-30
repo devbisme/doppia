@@ -174,8 +174,8 @@ class MainWindow(QMainWindow):
         saved, desc = QFont(), self.settings.value("font")
         self.apply_font(saved if desc and saved.fromString(desc) else self.default_font)
 
-        path = path or self.settings.value("last_file")
-        if path and os.path.exists(path):
+        self.show_ledger(Ledger())
+        if path:
             self.open_path(path)
         self.update_title()
 
@@ -191,6 +191,7 @@ class MainWindow(QMainWindow):
             return a
 
         m = self.menuBar().addMenu("&File")
+        act(m, "&New", self.new_file, "Ctrl+Shift+N")  # Ctrl+N is a new transaction
         act(m, "&Open…", self.open_file, QKeySequence.Open)
         act(m, "&Save", self.save, QKeySequence.Save)
         act(m, "Save &As…", self.save_as, QKeySequence.SaveAs)
@@ -391,15 +392,22 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, "Open", str(e))
             return
+        self.show_ledger(ledger)
+
+    def show_ledger(self, ledger):
         self.ledger = ledger
-        self.settings.setValue("last_file", path)
         self.model.set_ledger(ledger)
         self.account = None
         self.refresh_accounts()
         self.fit_account_list()
-        if not self.columns_fitted:
-            self.columns_fitted = True
-            QTimer.singleShot(0, self.initial_columns)  # after the window has its final layout
+        self.settle_columns()
+
+    def settle_columns(self):
+        """Size the columns once, from the saved widths or else from the first data to show."""
+        if self.columns_fitted or not (self.settings.value("column_widths") or self.ledger.transactions):
+            return
+        self.columns_fitted = True
+        QTimer.singleShot(0, self.initial_columns)  # after the window has its final layout
 
     def maybe_save(self):
         if self.ledger is None or not self.ledger.dirty:
@@ -410,6 +418,11 @@ class MainWindow(QMainWindow):
         if r == QMessageBox.Save:
             return self.save()
         return r == QMessageBox.Discard
+
+    def new_file(self):
+        if self.maybe_save():
+            self.show_ledger(Ledger())
+            self.update_title()
 
     def open_file(self):
         if not self.maybe_save():
@@ -439,7 +452,6 @@ class MainWindow(QMainWindow):
         if not path:
             return False
         self.ledger.path = path
-        self.settings.setValue("last_file", path)
         return self.save()
 
     def export_countabout(self):
@@ -576,6 +588,7 @@ class MainWindow(QMainWindow):
     def changed(self, select_txn=None):
         """Call after any ledger mutation."""
         self.refresh_accounts()
+        self.settle_columns()
         if select_txn is not None:
             self.select_txn(select_txn)
 

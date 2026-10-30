@@ -40,7 +40,7 @@ everything else works without it.
 
 ## Run
 
-    doppia path/to/countabout-export.csv     # reopens the last file if omitted
+    doppia path/to/countabout-export.csv     # starts a new, empty ledger if omitted
 
 ## Development
 
@@ -49,6 +49,14 @@ with the dependencies it needs:
 
     uv run doppia path/to/countabout-export.csv
     uv run --extra test pytest
+
+## What's new in 0.4.0
+
+- **File → New** (Ctrl+Shift+N) starts an empty ledger, so you can build one from scratch instead
+  of starting from a CountAbout export. Add accounts with **Account → New account**, then
+  transactions. Save asks for a file name the first time.
+- Running `doppia` without a file now starts a new ledger and no longer reopens the last file.
+- Running `doppia` with a file that doesn't exist now shows an error, then opens an empty ledger.
 
 ## What's new in 0.3.0
 
@@ -194,6 +202,8 @@ with the dependencies it needs:
   app; the choice is remembered. View → Reset font returns to the system default. After a
   font change, View → Resize columns to fit refits the columns.
 - The window's size and position are remembered between runs.
+- **File → New** (Ctrl+Shift+N) starts an empty ledger: add accounts with **Account → New
+  account**, then transactions. Save asks for a file name the first time.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
 - Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.15 s to switch accounts.
 
