@@ -60,7 +60,7 @@ with the dependencies it needs:
   visible on selected rows. `$` and commas are accepted when typing amounts.
 - Register per account or all accounts: running balance, **View → Hide cleared** and
   **View → Hide future** toggles (the Balance column still counts hidden rows; while rows are
-  hidden, a note beside the account name shows how many are shown), and a filter
+  hidden, a note beside the account name shows how many, and hovering over it gives the breakdown), and a filter
   field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
   `\$3,000`) matched in the description, category, memo, ref, date, or amount. Its X button
   clears it; an invalid expression tints the field and is ignored. The account names over
@@ -68,10 +68,15 @@ with the dependencies it needs:
   - Ctrl/Shift-click in the account list to select several accounts; the register shows their
     combined transactions with a combined running balance. Reconcile and Rename account need
     a single account selected.
-  - Columns are sized once, when the first ledger loads: to their contents and, if they don't all
+  - Column widths are remembered between runs. On the very first run they're sized to their
+    contents and, if they don't all
     fit the pane, with Memo, then Description, Category, and Account narrowed as needed, each down
-    to the width that cuts off fewer than 5% of its entries. Those four then stay as they are (drag
-    them to change them). Date, Ref, Amount, Clr, and Balance widen when needed so they never truncate.
+    to the width that cuts off fewer than 5% of its entries. After that they're only changed by
+    dragging them or by **View → Resize columns to fit**. Date, Ref, Amount, Clr, and Balance widen when needed so they never truncate.
+  - The Clr column is always just wide enough for its label.
+  - **View → Resize columns to fit** changes all the other columns by the same number of pixels to fill the
+    pane. When shrinking, Date, Ref, Amount, Clr, and Balance stop at their contents and the others
+    at their headers, and the remaining columns share the rest.
   - Click a column header to sort by it; click again to reverse. The sort column's header
     is highlighted, and the selection is kept when re-sorting. The register opens sorted by
     date, newest first. The Balance column is a date-order running balance, so it only
@@ -138,6 +143,7 @@ with the dependencies it needs:
     without color. Wide month-by-category reports print landscape in a smaller font.
 - View → Font… sets the font family, style (regular/italic/bold), and size for the whole
   app; the choice is remembered. View → Reset font returns to the system default.
+- The window's size and position are remembered between runs.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
 - Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.15 s to switch accounts.
 

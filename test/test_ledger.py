@@ -285,3 +285,15 @@ def test_fit_columns():
     assert fit_widths(widths, floors, order, 270) == {**widths, "memo": 80}  # only memo needed
     assert fit_widths(widths, floors, order, 200) == {**widths, "memo": 40, "desc": 50}
     assert fit_widths(widths, floors, order, 10) == {**floors}  # can't fit: stops at the floors
+
+
+def test_even_widths():
+    from doppia.gui.models import even_widths
+
+    mins = {"a": 10, "b": 10, "c": 10}
+    assert even_widths({"a": 50, "b": 50, "c": 50}, mins, 180) == {"a": 60, "b": 60, "c": 60}  # grow
+    assert even_widths({"a": 50, "b": 60, "c": 70}, mins, 150) == {"a": 40, "b": 50, "c": 60}  # shrink
+    assert sum(even_widths({"a": 50, "b": 50, "c": 50}, mins, 151).values()) == 151  # leftover pixel
+    # A column at its minimum drops out and the others share the rest.
+    assert even_widths({"a": 15, "b": 50, "c": 50}, mins, 95) == {"a": 10, "b": 42, "c": 43}
+    assert even_widths({"a": 50, "b": 50, "c": 50}, mins, 5) == mins  # minimums don't fit

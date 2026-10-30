@@ -98,12 +98,28 @@ def fit_widths(widths, floors, order, available):
     return widths
 
 
+def even_widths(widths, minimums, available):
+    """Change every column by the same number of pixels so the total becomes `available`.
+    Columns stop at their minimum and the others share what's left, so the result can
+    still exceed `available` if the minimums don't fit."""
+    widths = dict(widths)
+    while True:
+        change = available - sum(widths.values())
+        free = [c for c in widths if change > 0 or widths[c] > minimums[c]]
+        if change == 0 or not free:
+            return widths
+        step, extra = divmod(abs(change), len(free))
+        for i, c in enumerate(free):  # the first `extra` columns take the leftover pixels
+            delta = step + (i < extra)
+            widths[c] = widths[c] + delta if change > 0 else max(minimums[c], widths[c] - delta)
+
+
 class RegisterModel(QAbstractTableModel):
     """Rows of one account, several accounts, or all accounts, newest first, with running balance.
     `account` is an account name, a collection of names, or None for all accounts."""
 
-    COLS = ["Date", "Account", "Ref", "Description", "Category", "Memo", "Amount", "Clr", "Balance"]
-    C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_MEMO, C_AMOUNT, C_CLR, C_BAL = range(len(COLS))
+    COLS = ["Date", "Account", "Ref", "Description", "Category", "Memo", "Amount", "Balance", "Clr"]
+    C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_MEMO, C_AMOUNT, C_BAL, C_CLR = range(len(COLS))
 
     def __init__(self, ledger, account=None):
         super().__init__()
@@ -308,15 +324,17 @@ class RegisterFilter(QSortFilterProxyModel):
         self.hide_future = on
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, row, parent):
-        t = self.sourceModel().txn(row)
+    def hidden_reason(self, t):
+        """Why a transaction is hidden: "cleared", "future", "filter", or None if it's shown."""
         if self.hide_cleared and t.is_cleared:
-            return False
+            return "cleared"
         if self.hide_future and t.date > self.sourceModel().today:
-            return False
+            return "future"
         if self.pattern is None:
-            return True
+            return None
         search = self.pattern.search
-        return any(
-            search(f) for f in (t.description, t.category, t.memo, t.ref, t.amount_str, money(t.amount), t.date_str)
-        )
+        fields = (t.description, t.category, t.memo, t.ref, t.amount_str, money(t.amount), t.date_str)
+        return None if any(search(f) for f in fields) else "filter"
+
+    def filterAcceptsRow(self, row, parent):
+        return self.hidden_reason(self.sourceModel().txn(row)) is None

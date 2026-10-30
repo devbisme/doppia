@@ -1,8 +1,10 @@
 """Main window and entry point."""
 
 import datetime as dt
+import json
 import os
 import sys
+from collections import Counter
 from decimal import Decimal
 
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer
@@ -38,6 +40,7 @@ from .models import (
     PaddedDelegate,
     RegisterFilter,
     RegisterModel,
+    even_widths,
     fit_widths,
     keep_colors_when_selected,
     money,
@@ -104,6 +107,8 @@ class MainWindow(QMainWindow):
         self.view.customContextMenuRequested.connect(self.context_menu)
         hdr = self.view.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setSectionResizeMode(RegisterModel.C_CLR, QHeaderView.Fixed)
+        hdr.setMinimumSectionSize(1)  # the default is wider than the snug Clr column
         # Header clicks sort; clicking the same header again reverses the order.
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(RegisterModel.C_DATE, Qt.DescendingOrder)
@@ -163,6 +168,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.split)
         self.build_menus()
         self.resize(1450, 850)
+        geometry = self.settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
 
         self.default_font = QFont(QApplication.font())
         saved, desc = QFont(), self.settings.value("font")
@@ -214,6 +222,7 @@ class MainWindow(QMainWindow):
         m = self.menuBar().addMenu("&View")
         act(m, "&Hide cleared", self.proxy.set_hide_cleared).setCheckable(True)
         act(m, "Hide f&uture", self.proxy.set_hide_future).setCheckable(True)
+        act(m, "Resize &columns to fit", self.resize_columns)
         m.addSeparator()
         act(m, "&Font…", self.choose_font)
         act(m, "&Reset font", self.reset_font)
@@ -264,7 +273,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.fit_account_list)
 
     def measure_columns(self, columns):
-        """{column: (longest entry's width, width cutting off under 5% of entries)} in pixels."""
+        """{column: (longest entry's width, width cutting off under 5% of entries, header's
+        width)} in pixels."""
         fm = self.view.fontMetrics()
         # Cell margins, the grid line, and slack: drawn text can run wider than its metrics,
         # and without room to spare Qt elides it.
@@ -281,28 +291,64 @@ class MainWindow(QMainWindow):
                 if s and s not in measured:
                     measured[s] = fm.horizontalAdvance(s)
             widths = [measured[s] for s in texts if s]
+            if col == RegisterModel.C_CLR:  # just its label, with a small space on each side
+                snug = header_fm.horizontalAdvance(RegisterModel.COLS[col]) + 2 * fm.averageCharWidth()
+                sizes[col] = (snug, snug, snug)
+                continue
             header = header_fm.horizontalAdvance(RegisterModel.COLS[col]) + margin + 20  # 20: sort arrow
             floor = max(untruncated_width(widths) + margin, header)
-            sizes[col] = (max(max(widths, default=0) + margin, header), floor)
+            sizes[col] = (max(max(widths, default=0) + margin, header), floor, header)
         return sizes
 
+    def initial_columns(self):
+        """Use the column widths from the last run, or fit them if this is the first."""
+        try:
+            saved = json.loads(self.settings.value("column_widths") or "{}")
+        except ValueError:
+            saved = {}
+        if not saved:
+            self.fit_columns()
+            return
+        for col, name in enumerate(RegisterModel.COLS):
+            if saved.get(name):
+                self.view.setColumnWidth(col, saved[name])
+        self.size_fixed_columns()  # the data may have outgrown a saved width
+
+    def save_columns(self):
+        if self.columns_fitted:  # before a ledger loads, the widths are only placeholders
+            self.view.setColumnHidden(RegisterModel.C_ACCOUNT, False)  # a hidden column reads as 0
+            widths = {name: self.view.columnWidth(col) for col, name in enumerate(RegisterModel.COLS)}
+            self.settings.setValue("column_widths", json.dumps(widths))
+
     def fit_columns(self):
-        """Size all columns to their contents, narrowing SHRINK_ORDER to fit the pane.
-        Done once, when the first ledger loads."""
+        """Size all columns to their contents, narrowing SHRINK_ORDER to fit the pane."""
         sizes = self.measure_columns(range(len(RegisterModel.COLS)))
-        widths = {c: w for c, (w, _) in sizes.items()}
-        floors = {c: f for c, (_, f) in sizes.items()}
-        available = (
-            self.view.width() - 2 * self.view.frameWidth() - self.view.verticalScrollBar().sizeHint().width()
-        )
-        for col, width in fit_widths(widths, floors, self.SHRINK_ORDER, available).items():
+        widths = {c: s[0] for c, s in sizes.items()}
+        floors = {c: s[1] for c, s in sizes.items()}
+        for col, width in fit_widths(widths, floors, self.SHRINK_ORDER, self.pane_width()).items():
+            self.view.setColumnWidth(col, width)
+
+    def pane_width(self):
+        """Width available to the columns, leaving room for the vertical scrollbar."""
+        return self.view.width() - 2 * self.view.frameWidth() - self.view.verticalScrollBar().sizeHint().width()
+
+    def resize_columns(self):
+        """Change all visible columns by the same amount to fit the pane. The FIXED_COLUMNS stop
+        at their contents, and the others at their headers."""
+        sizes = self.measure_columns(range(len(RegisterModel.COLS)))
+        shown = [c for c in sizes if not self.view.isColumnHidden(c) and c != RegisterModel.C_CLR]
+        widths = {c: self.view.columnWidth(c) for c in shown}
+        minimums = {c: sizes[c][0 if c in self.FIXED_COLUMNS else 2] for c in shown}
+        available = self.pane_width() - self.view.columnWidth(RegisterModel.C_CLR)
+        for col, width in even_widths(widths, minimums, available).items():
             self.view.setColumnWidth(col, width)
 
     def size_fixed_columns(self, grow_only=True):
         """Keep every entry of the FIXED_COLUMNS visible. Normally they only grow, so that
         ordinary edits and account switches don't make the columns jitter."""
-        for col, (width, _) in self.measure_columns(self.FIXED_COLUMNS).items():
-            self.view.setColumnWidth(col, max(width, self.view.columnWidth(col)) if grow_only else width)
+        for col, (width, *_) in self.measure_columns(self.FIXED_COLUMNS).items():
+            grow = grow_only and col != RegisterModel.C_CLR  # Clr is always exactly snug
+            self.view.setColumnWidth(col, max(width, self.view.columnWidth(col)) if grow else width)
 
     def fit_account_list(self):
         """Widen the account pane so names and balances fit (only on font change or file open,
@@ -334,7 +380,7 @@ class MainWindow(QMainWindow):
         self.fit_account_list()
         if not self.columns_fitted:
             self.columns_fitted = True
-            QTimer.singleShot(0, self.fit_columns)  # after the window has its final layout
+            QTimer.singleShot(0, self.initial_columns)  # after the window has its final layout
 
     def maybe_save(self):
         if self.ledger is None or not self.ledger.dirty:
@@ -379,6 +425,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev):
         if self.maybe_save():
+            self.settings.setValue("geometry", self.saveGeometry())
+            self.save_columns()
             ev.accept()
         else:
             ev.ignore()
@@ -412,18 +460,16 @@ class MainWindow(QMainWindow):
 
     def update_hidden_note(self):
         """Say so when the View toggles or the filter are hiding transactions."""
-        shown, total = self.proxy.rowCount(), self.model.rowCount()
-        reasons = [
-            label
-            for label, active in (
-                ("Hide cleared", self.proxy.hide_cleared),
-                ("Hide future", self.proxy.hide_future),
-                ("Filter", self.proxy.pattern is not None),
-            )
-            if active
-        ]
-        self.hidden_note.setText(f"{shown:,} of {total:,} shown" if shown < total else "")
-        self.hidden_note.setToolTip(", ".join(reasons))
+        hidden = self.model.rowCount() - self.proxy.rowCount()
+        self.hidden_note.setText(f"{hidden:,} hidden" if hidden else "")
+        counts = Counter(self.proxy.hidden_reason(t) for t in self.model.rows) if hidden else {}
+        # A row hidden for two reasons counts under the first, so the lines add up to the total.
+        lines = (
+            f"{counts[reason]:,} {label}"
+            for reason, label in (("cleared", "cleared"), ("future", "future"), ("filter", "not matching the filter"))
+            if counts.get(reason)
+        )
+        self.hidden_note.setToolTip("\n".join(lines))
 
     def filter_changed(self, text):
         error = self.proxy.set_text(text)
