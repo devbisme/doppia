@@ -120,13 +120,18 @@ class RegisterModel(QAbstractTableModel):
 
     COLS = ["Date", "Account", "Ref", "Description", "Category", "Amount", "Balance", "Clr", "Memo"]
     C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_AMOUNT, C_BAL, C_CLR, C_MEMO = range(len(COLS))
+    LINE_BLANK = (C_DATE, C_ACCOUNT, C_REF, C_DESC, C_BAL, C_CLR)  # left empty on a split's lines
+    LINE_INDENT = "    "
 
     def __init__(self, ledger, account=None):
         super().__init__()
         self.ledger = ledger
         self.account = account
-        self.rows = []
-        self.balances = []
+        self.entries = []  # one per transaction; a split is a SplitSummary
+        self.entry_balances = []
+        self.rows = []  # displayed rows: the entries, each split followed by its lines
+        self.balances = []  # running balance by row; None marks a split's line
+        self.owners = []  # the entry each row belongs to
         self.sort_column, self.sort_order = self.C_DATE, Qt.DescendingOrder
         self.refresh()
 
@@ -153,19 +158,20 @@ class RegisterModel(QAbstractTableModel):
         # Ledger order is newest first; within a date the file lists later entries first.
         # Running balance accumulates in chronological order, i.e. reversed list order.
         rows.sort(key=lambda t: t.date, reverse=True)  # stable: preserves within-date order
+        entries = self.ledger.entries(rows) if self.ledger is not None else []
         bal = Decimal("0")
         balances = []
-        for t in reversed(rows):
+        for t in reversed(entries):
             bal += t.amount
             balances.append(bal)
-        self.rows, self.balances = rows, balances[::-1]
+        self.entries, self.entry_balances = entries, balances[::-1]
         self._sort_rows()
         self.endResetModel()
 
     def _sort_key(self, column):
         """Key function on row number. Computed once per row per sort, which matters at 10k+ rows:
         letting QSortFilterProxyModel sort would call data() on every comparison."""
-        rows, bals = self.rows, self.balances
+        rows, bals = self.entries, self.entry_balances
         if column == self.C_DATE:
             return lambda i: rows[i].date
         if column == self.C_AMOUNT:
@@ -186,10 +192,18 @@ class RegisterModel(QAbstractTableModel):
     def _sort_rows(self):
         # Stable in both directions, so ties keep the previous order (e.g. newest-first within a date).
         order = sorted(
-            range(len(self.rows)), key=self._sort_key(self.sort_column), reverse=self.sort_order == Qt.DescendingOrder
+            range(len(self.entries)), key=self._sort_key(self.sort_column), reverse=self.sort_order == Qt.DescendingOrder
         )
-        self.rows = [self.rows[i] for i in order]
-        self.balances = [self.balances[i] for i in order]
+        self.entries = [self.entries[i] for i in order]
+        self.entry_balances = [self.entry_balances[i] for i in order]
+        self.rows, self.balances, self.owners = [], [], []
+        for t, bal in zip(self.entries, self.entry_balances):
+            self.rows.append(t)
+            self.balances.append(bal)
+            self.owners.append(t)
+            self.rows.extend(t.lines)
+            self.balances.extend([None] * len(t.lines))
+            self.owners.extend([t] * len(t.lines))
 
     def sort(self, column, order=Qt.AscendingOrder):
         """Sort in place, keeping selections and the current row attached to their transactions."""
@@ -207,18 +221,19 @@ class RegisterModel(QAbstractTableModel):
         if column == self.C_AMOUNT:
             return [money(t.amount) for t in self.rows]
         if column == self.C_BAL:
-            return [money(b) for b in self.balances]
+            return [money(b) for b in self.entry_balances]
         if column == self.C_CLR:
             return [CLEARED_MARK] if self.rows else []
+        if column == self.C_CAT:
+            return [t.category if b is not None else self.LINE_INDENT + t.category for t, b in zip(self.rows, self.balances)]
         attr = {
             self.C_DATE: "date_str",
             self.C_ACCOUNT: "account",
             self.C_REF: "ref",
             self.C_DESC: "description",
-            self.C_CAT: "category",
             self.C_MEMO: "memo",
         }[column]
-        return [getattr(t, attr) for t in self.rows]
+        return [getattr(t, attr) for t in (self.entries if column in self.LINE_BLANK else self.rows)]
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
@@ -232,12 +247,20 @@ class RegisterModel(QAbstractTableModel):
         return None
 
     def txn(self, row):
-        return self.rows[row]
+        """The transaction a row belongs to: for any row of a split, its SplitSummary."""
+        return self.owners[row]
+
+    def block(self, row):
+        """The first and last rows of the transaction at this row."""
+        first = row - 1 if self.balances[row] is None else row
+        while self.balances[first] is None:
+            first -= 1
+        return first, first + len(self.rows[first].lines)
 
     def txns_changed(self, txns):
         """Repaint these transactions' rows without resetting the model."""
         ids = {id(t) for t in txns}
-        rows = [r for r, t in enumerate(self.rows) if id(t) in ids]
+        rows = [r for r, t in enumerate(self.owners) if id(t) in ids]
         if rows:
             self.dataChanged.emit(self.index(rows[0], 0), self.index(rows[-1], len(self.COLS) - 1))
 
@@ -246,17 +269,20 @@ class RegisterModel(QAbstractTableModel):
             return None
         t = self.rows[index.row()]
         c = index.column()
+        line = self.balances[index.row()] is None
         if role == Qt.DisplayRole:
+            if line and c in self.LINE_BLANK:
+                return ""
             return {
                 self.C_DATE: t.date_str,
                 self.C_ACCOUNT: t.account,
                 self.C_REF: t.ref,
                 self.C_DESC: t.description,
-                self.C_CAT: t.category,
+                self.C_CAT: self.LINE_INDENT + t.category if line else t.category,
                 self.C_MEMO: t.memo,
                 self.C_AMOUNT: money(t.amount),
                 self.C_CLR: CLEARED_MARK if t.is_cleared else "",
-                self.C_BAL: money(self.balances[index.row()]),
+                self.C_BAL: None if line else money(self.balances[index.row()]),
             }[c]
         if role == Qt.ForegroundRole:
             if c == self.C_AMOUNT and t.amount:
@@ -271,7 +297,7 @@ class RegisterModel(QAbstractTableModel):
             return int(Qt.AlignRight | Qt.AlignVCenter)
         if role == Qt.TextAlignmentRole and c in (self.C_DATE, self.C_CLR):
             return int(Qt.AlignCenter)
-        if role == Qt.ToolTipRole and t.is_split:
+        if role == Qt.ToolTipRole and t.is_old_split:
             return "Split transaction (CountAbout export does not include split details)"
         return None
 
@@ -333,8 +359,11 @@ class RegisterFilter(QSortFilterProxyModel):
         if self.pattern is None:
             return None
         search = self.pattern.search
-        fields = (t.description, t.category, t.memo, t.ref, t.amount_str, money(t.amount), t.date_str)
-        return None if any(search(f) for f in fields) else "filter"
+        for row in (t, *t.lines):  # a split shows as a whole if any of its lines matches
+            fields = (row.description, row.category, row.memo, row.ref, row.amount_str, money(row.amount), row.date_str)
+            if any(search(f) for f in fields):
+                return None
+        return "filter"
 
     def filterAcceptsRow(self, row, parent):
         return self.hidden_reason(self.sourceModel().txn(row)) is None

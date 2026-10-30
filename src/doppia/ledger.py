@@ -11,6 +11,7 @@ import datetime as dt
 import functools
 import os
 import shutil
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
@@ -30,6 +31,9 @@ COLUMNS = [
 ]
 DATE_FMT = "%m-%d-%Y"
 SPLIT_CATEGORY = "{SPLIT}"
+NO_SPLIT_ID = "NA"
+# Fields that every line of a split must share, beyond those edited through the dialog.
+SPLIT_SHARED_ATTRS = ("description", "ref", "tags")
 OPENING_DESCRIPTION = "Beginning Balance"
 # Text fields open to search and replace: display name -> Transaction attribute.
 SEARCH_FIELDS = {"Description": "description", "Category": "category", "Memo": "memo", "Ref": "ref", "Tags": "tags"}
@@ -45,6 +49,10 @@ def _quote(text):
     if text and any(c in text for c in ' ,"\n'):
         return '"' + text.replace('"', '""') + '"'
     return text
+
+
+def new_split_id():
+    return uuid.uuid4().hex[:12]
 
 
 def format_amount(value):
@@ -64,7 +72,13 @@ def transfer_target(category):
 
 @dataclass(eq=False)
 class Transaction:
-    """One CSV row. All attributes are the raw CSV strings."""
+    """One CSV row. All attributes are the raw CSV strings.
+
+    A split is stored as one row per line, each with its own category, amount, and memo, sharing
+    a generated Split ID. There is no parent row, so sums of rows stay correct everywhere.
+    CountAbout's own {SPLIT} rows have Split ID NA and no lines (is_old_split)."""
+
+    lines = ()  # the rows a SplitSummary stands for; not a CSV field
 
     account: str = ""
     date_str: str = ""
@@ -117,8 +131,30 @@ class Transaction:
         return self.split == "Y"
 
     @property
+    def split_group(self):
+        """The Split ID linking this row to the other lines of its split, or None."""
+        return self.split_id if self.is_split and self.split_id != NO_SPLIT_ID else None
+
+    @property
+    def is_old_split(self):
+        """A CountAbout {SPLIT} row, which holds a total but no line detail."""
+        return self.category == SPLIT_CATEGORY and not self.lines
+
+    @property
     def transfer_account(self):
         return transfer_target(self.category)
+
+
+class SplitSummary(Transaction):
+    """One split as a single transaction: the total in CountAbout's {SPLIT} row form.
+    Built on demand by Ledger.entries() and never stored in the ledger."""
+
+    def __init__(self, lines):
+        super().__init__(*lines[0].to_row())
+        self.lines = lines
+        self.category, self.split_id = SPLIT_CATEGORY, NO_SPLIT_ID
+        self.amount = sum((t.amount for t in lines), Decimal("0"))
+        self.memo = ""  # memos belong to the lines
 
 
 @dataclass
@@ -144,10 +180,19 @@ class Ledger:
             txns.append(Transaction.from_row(row))
         return cls(txns, path)
 
-    def to_text(self):
+    def to_text(self, rows=None):
         lines = [",".join(_quote(c) for c in COLUMNS)]
-        lines += [",".join(_quote(v) for v in t.to_row()) for t in self.transactions]
+        lines += [",".join(_quote(v) for v in t.to_row()) for t in (self.transactions if rows is None else rows)]
         return "\n".join(lines) + "\n"
+
+    def to_countabout_text(self):
+        """The ledger as CountAbout writes it: each split is one {SPLIT} row with its total,
+        and the row's memo is the only place left for the memos of its lines."""
+        rows = self.entries()
+        for t in rows:
+            if t.lines:
+                t.memo = "; ".join(line.memo for line in t.lines if line.memo)
+        return self.to_text(rows)
 
     def save(self, path=None):
         """Write atomically, keeping the previous file as <path>.bak."""
@@ -178,6 +223,35 @@ class Ledger:
 
     def for_account(self, account):
         return [t for t in self.transactions if t.account == account]
+
+    def entries(self, rows=None):
+        """One item per real transaction, in row order: each split is collapsed to a SplitSummary
+        at the position of its first line. `rows` limits this to those rows."""
+        rows = self.transactions if rows is None else rows
+        groups = defaultdict(list)
+        for t in rows:
+            if t.split_group is not None:
+                groups[t.split_group].append(t)
+        out = []
+        for t in rows:
+            if t.split_group is None:
+                out.append(t)
+            elif groups[t.split_group][0] is t:
+                out.append(SplitSummary(groups[t.split_group]))
+        return out
+
+    def split_lines(self, txn):
+        """The ledger rows of a transaction: all lines of a split, else just the row itself."""
+        if txn.lines:
+            return list(txn.lines)
+        if txn.split_group is None:
+            return [txn]
+        return [t for t in self.transactions if t.split_group == txn.split_group]
+
+    def with_split_lines(self, txns):
+        """The ledger rows of these transactions, each row once."""
+        rows = {id(line): line for t in txns for line in self.split_lines(t)}
+        return list(rows.values())
 
     def account_balances(self, as_of=None):
         """{account: (balance, cleared balance)} in one pass over the ledger.
@@ -262,24 +336,25 @@ class Ledger:
     def apply_replacements(self, changes):
         """Apply (txn, attr, new) changes. Callers check replacement_problem() first."""
         for t, attr, new in changes:
-            setattr(t, attr, new)
+            for row in self.split_lines(t) if attr in SPLIT_SHARED_ATTRS else [t]:
+                setattr(row, attr, new)
         if changes:
             self.dirty = True
 
     # ---------------------------------------------------------------- mutation
 
-    def _insert_sorted(self, txn):
-        """Insert keeping the file's newest-first date order; new rows go first within a date."""
-        d = txn.date
+    def _insert_sorted(self, *txns):
+        """Insert adjacent rows of one date, keeping the file's newest-first date order;
+        new rows go first within a date."""
+        d = txns[0].date
         for i, t in enumerate(self.transactions):
             if t.date <= d:
-                self.transactions.insert(i, txn)
+                self.transactions[i:i] = txns
                 return
-        self.transactions.append(txn)
+        self.transactions.extend(txns)
 
-    def add(self, txn):
-        """Add a transaction. A transfer also gets its mirror row in the other account."""
-        self._insert_sorted(txn)
+    def _insert_mirror(self, txn):
+        """Give a new transfer its mirror row in the other account."""
         other = txn.transfer_account
         if other is not None and other != txn.account:
             mirror = txn.copy()
@@ -288,6 +363,33 @@ class Ledger:
             mirror.amount = -txn.amount
             mirror.cleared = ""
             self._insert_sorted(mirror)
+
+    def add(self, txn):
+        """Add a transaction. A transfer also gets its mirror row in the other account."""
+        self._insert_sorted(txn)
+        self._insert_mirror(txn)
+        self.dirty = True
+
+    def add_split(self, lines):
+        """Add the lines of a new split, which already share a Split ID."""
+        self._insert_sorted(*lines)
+        self.dirty = True
+
+    def update_split(self, txn, new_lines):
+        """Replace a transaction with these rows, keeping its place within its date. Handles a
+        split being edited, a single row becoming a split, and a split going back to one row."""
+        old = self.split_lines(txn)
+        partner = self.find_transfer_partner(old[0])
+        doomed = {id(t) for t in old[1:]} | {id(partner)}
+        self.transactions = [t for t in self.transactions if id(t) not in doomed]
+        i = self.transactions.index(old[0])
+        if old[0].date_str == new_lines[0].date_str:
+            self.transactions[i : i + 1] = new_lines
+        else:
+            del self.transactions[i]
+            self._insert_sorted(*new_lines)
+        if len(new_lines) == 1:
+            self._insert_mirror(new_lines[0])
         self.dirty = True
 
     def update(self, txn, new):
@@ -316,7 +418,8 @@ class Ledger:
 
     def delete(self, txn, with_partner=True):
         partner = self.find_transfer_partner(txn) if with_partner else None
-        self.transactions.remove(txn)
+        for row in self.split_lines(txn):
+            self.transactions.remove(row)
         if partner is not None:
             self.transactions.remove(partner)
         self.dirty = True
@@ -352,6 +455,8 @@ class Ledger:
 
     def set_cleared(self, txn, cleared):
         txn.is_cleared = cleared
+        for row in self.split_lines(txn):
+            row.is_cleared = cleared
         self.dirty = True
 
     def create_account(self, name, opening_balance=Decimal("0"), date=None):

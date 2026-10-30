@@ -173,7 +173,7 @@ class PayeeMatcher:
 def build_candidates(ledger, account, rows, profile):
     """Convert bank rows to Candidates: auto-categorized, with likely duplicates flagged/excluded."""
     matcher = PayeeMatcher.from_ledger(ledger)
-    existing = ledger.for_account(account)
+    existing = ledger.entries(ledger.for_account(account))  # a bank row matches a split's total
     claimed = set()
     out = []
     for row in rows:

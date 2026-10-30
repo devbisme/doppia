@@ -7,8 +7,8 @@ import sys
 from collections import Counter
 from decimal import Decimal
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPixmap
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -33,7 +33,16 @@ from PySide6.QtWidgets import (
 )
 
 from ..ledger import Ledger
-from .dialogs import ClipboardImportDialog, ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
+from .dialogs import (
+    ClipboardImportDialog,
+    ImportDialog,
+    ReconcileDialog,
+    ReplaceDialog,
+    ReportDialog,
+    TransactionDialog,
+    parse_amount,
+    sign_icon,
+)
 from .models import (
     NEG_COLOR,
     POS_COLOR,
@@ -50,20 +59,6 @@ from .models import (
 
 ALL_ACCOUNTS = "All accounts"
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
-
-
-def sign_icon(brush, plus):
-    """A plus or minus sign painted as bars, so it looks the same in any font."""
-    size, thick, inset = 64, 14, 6
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    p = QPainter(pixmap)
-    mid = (size - thick) // 2
-    p.fillRect(inset, mid, size - 2 * inset, thick, brush)
-    if plus:
-        p.fillRect(mid, inset, thick, size - 2 * inset, brush)
-    p.end()
-    return QIcon(pixmap)
 
 
 class MainWindow(QMainWindow):
@@ -101,6 +96,7 @@ class MainWindow(QMainWindow):
         self.view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.view.verticalHeader().hide()
+        self.view.selectionModel().selectionChanged.connect(self.select_whole_splits)
         self.view.clicked.connect(self.on_click)
         self.view.doubleClicked.connect(self.on_double_click)
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -199,6 +195,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         act(m, "&Import bank CSV…", self.import_csv, "Ctrl+I")
         act(m, "Import from &clipboard (local LLM)…", self.import_clipboard, "Ctrl+Shift+V")
+        act(m, "&Export for CountAbout…", self.export_countabout)
         m.addSeparator()
         act(m, "&Quit", self.close, QKeySequence.Quit)
 
@@ -423,6 +420,26 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_file", path)
         return self.save()
 
+    def export_countabout(self):
+        """Write a separate CSV in CountAbout's format; the open ledger is not changed."""
+        if not self.need_ledger():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export for CountAbout (each split becomes one total row)", "countabout-export.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        if self.ledger.path and os.path.abspath(path) == os.path.abspath(self.ledger.path):
+            QMessageBox.warning(self, "Export", "Choose a different file: this would replace the open ledger and lose split lines.")
+            return
+        try:
+            with open(path, "w", newline="") as f:
+                f.write(self.ledger.to_countabout_text())
+        except OSError as e:
+            QMessageBox.critical(self, "Export", str(e))
+            return
+        self.statusBar().showMessage(f"Exported to {path}", 5000)
+
     def closeEvent(self, ev):
         if self.maybe_save():
             self.settings.setValue("geometry", self.saveGeometry())
@@ -460,9 +477,12 @@ class MainWindow(QMainWindow):
 
     def update_hidden_note(self):
         """Say so when the View toggles or the filter are hiding transactions."""
-        hidden = self.model.rowCount() - self.proxy.rowCount()
+        counts = Counter()
+        if self.model.rowCount() != self.proxy.rowCount():
+            counts = Counter(self.proxy.hidden_reason(t) for t in self.model.entries)
+            del counts[None]
+        hidden = counts.total()
         self.hidden_note.setText(f"{hidden:,} hidden" if hidden else "")
-        counts = Counter(self.proxy.hidden_reason(t) for t in self.model.rows) if hidden else {}
         # A row hidden for two reasons counts under the first, so the lines add up to the total.
         lines = (
             f"{counts[reason]:,} {label}"
@@ -559,6 +579,33 @@ class MainWindow(QMainWindow):
             self.accounts = [a for a in self.ledger.accounts() if a in names]
         self.show_accounts()
 
+    def select_whole_splits(self, selected, deselected):
+        """Keep a split highlighted all or not at all. Ctrl-clicking one of its rows
+        deselects it; any other change that leaves it partly highlighted selects all of it."""
+        if len(self.model.rows) == len(self.model.entries):
+            return  # no splits showing
+        model = self.view.selectionModel()
+        ctrl = QApplication.keyboardModifiers() & Qt.ControlModifier
+        select, deselect = QItemSelection(), QItemSelection()
+        seen = set()
+        for change, target in ((selected, select), (deselected, deselect if ctrl else select)):
+            for rng in change:
+                for row in range(rng.top(), rng.bottom() + 1):
+                    source = self.proxy.mapToSource(self.proxy.index(row, 0)).row()
+                    if not self.model.txn(source).lines or self.model.block(source) in seen:
+                        continue
+                    first, last = self.model.block(source)
+                    seen.add((first, last))
+                    top = self.proxy.mapFromSource(self.model.index(first, 0)).row()
+                    bottom = self.proxy.mapFromSource(self.model.index(last, 0)).row()
+                    marked = sum(model.isRowSelected(r) for r in range(top, bottom + 1))
+                    if 0 < marked <= bottom - top:  # partly highlighted
+                        target.select(self.proxy.index(top, 0), self.proxy.index(bottom, 0))
+        if select.count():
+            model.select(select, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        if deselect.count():
+            model.select(deselect, QItemSelectionModel.Deselect | QItemSelectionModel.Rows)
+
     def current_txn(self):
         idx = self.view.currentIndex()
         if not idx.isValid():
@@ -579,9 +626,17 @@ class MainWindow(QMainWindow):
         # With several accounts selected, default the new transaction to the first of them.
         dlg = TransactionDialog(self.ledger, account=self.accounts[0] if self.accounts else None, parent=self)
         if dlg.exec():
-            t = dlg.result_txn()
-            self.ledger.add(t)
-            self.changed(t)
+            self.add_from(dlg)
+
+    def add_from(self, dlg):
+        """Add the dialog's new transaction or split."""
+        lines = dlg.result_lines()
+        if lines:
+            self.ledger.add_split(lines)
+        else:
+            lines = [dlg.result_txn()]
+            self.ledger.add(lines[0])
+        self.changed(lines[0])
 
     def edit_txn(self):
         t = self.current_txn()
@@ -589,8 +644,14 @@ class MainWindow(QMainWindow):
             return
         dlg = TransactionDialog(self.ledger, txn=t, parent=self)
         if dlg.exec():
-            self.ledger.update(t, dlg.result_txn())
-            self.changed(t)
+            lines = dlg.result_lines()
+            if lines or t.lines:
+                lines = lines or [dlg.result_txn()]
+                self.ledger.update_split(t, lines)
+                self.changed(lines[0])
+            else:
+                self.ledger.update(t, dlg.result_txn())
+                self.changed(t)
 
     def copy_txn(self):
         t = self.current_txn()
@@ -598,9 +659,7 @@ class MainWindow(QMainWindow):
             return
         dlg = TransactionDialog(self.ledger, parent=self, copy_of=t)
         if dlg.exec():
-            new = dlg.result_txn()
-            self.ledger.add(new)
-            self.changed(new)
+            self.add_from(dlg)
 
     def on_click(self, idx):
         if idx.column() == RegisterModel.C_CLR:
@@ -629,7 +688,8 @@ class MainWindow(QMainWindow):
         if not rows:
             t = self.current_txn()
             return [t] if t is not None else []
-        return [self.model.txn(self.proxy.mapToSource(self.proxy.index(r, 0)).row()) for r in sorted(rows)]
+        txns = [self.model.txn(self.proxy.mapToSource(self.proxy.index(r, 0)).row()) for r in sorted(rows)]
+        return list({id(t): t for t in txns}.values())  # a split's rows are one transaction
 
     def delete_txn(self):
         txns = self.selected_txns()
@@ -639,10 +699,11 @@ class MainWindow(QMainWindow):
             self.delete_one(txns[0])
 
     def delete_txns(self, txns):
-        rows = self.ledger.with_transfer_partners(txns)
+        lines = self.ledger.with_split_lines(txns)
+        rows = self.ledger.with_transfer_partners(lines)
         msg = f"Delete {len(txns)} transactions?"
-        if len(rows) > len(txns):
-            msg += f"\n\n{len(rows) - len(txns)} matching transfer entries in other accounts will also be deleted."
+        if len(rows) > len(lines):
+            msg += f"\n\n{len(rows) - len(lines)} matching transfer entries in other accounts will also be deleted."
         if QMessageBox.question(self, "Delete", msg, defaultButton=QMessageBox.No) == QMessageBox.Yes:
             row = min(i.row() for i in self.view.selectionModel().selectedIndexes())
             self.ledger.delete_rows(rows)

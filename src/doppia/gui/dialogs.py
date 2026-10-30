@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 from PySide6.QtCore import QDate, QMarginsF, Qt, QThread, Signal
-from PySide6.QtGui import QDoubleValidator, QPageLayout, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtGui import QDoubleValidator, QIcon, QPageLayout, QPageSize, QPainter, QPdfWriter, QPixmap, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -30,14 +30,31 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from .. import export, importer, llm
-from ..ledger import SEARCH_FIELDS, SPLIT_CATEGORY, Transaction, transfer_category
-from .models import FUTURE_COLOR, keep_colors_when_selected, money, money_color, money_html
+from ..ledger import NO_SPLIT_ID, SEARCH_FIELDS, SPLIT_CATEGORY, Transaction, new_split_id, transfer_category, transfer_target
+from .models import FUTURE_COLOR, NEG_COLOR, POS_COLOR, keep_colors_when_selected, money, money_color, money_html
+
+
+def sign_icon(brush, plus):
+    """A plus or minus sign painted as bars, so it looks the same in any font."""
+    size, thick, inset = 64, 14, 6
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    p = QPainter(pixmap)
+    mid = (size - thick) // 2
+    p.fillRect(inset, mid, size - 2 * inset, thick, brush)
+    if plus:
+        p.fillRect(mid, inset, thick, size - 2 * inset, brush)
+    p.end()
+    return QIcon(pixmap)
 
 
 def qdate(d):
@@ -85,23 +102,88 @@ def category_choices(ledger):
     return ledger.categories() + [transfer_category(a) for a in ledger.accounts()]
 
 
+def amount_validator():
+    val = QDoubleValidator(0, 1e12, 2)
+    val.setNotation(QDoubleValidator.StandardNotation)
+    return val
+
+
+def link_payment_deposit(payment, deposit):
+    """Entering one of the pair clears the other."""
+    payment.textEdited.connect(lambda s: s and deposit.clear())
+    deposit.textEdited.connect(lambda s: s and payment.clear())
+
+
+class SplitLineEditor(QWidget):
+    """One line of a split: category, payment, deposit, memo, and a remove button (unless
+    `removable` is false). A zero amount shows as 0.00 under Deposit if `credit`, else Payment."""
+
+    changed = Signal()
+    amount_edited = Signal()  # by the user, unlike changed
+    removed = Signal(object)
+
+    def __init__(self, categories, category="", amount=Decimal("0"), memo="", removable=True, credit=False):
+        super().__init__()
+        self.category = editable_combo(categories, category)
+        self.payment, self.deposit = QLineEdit(), QLineEdit()
+        self.set_amount(amount, credit)
+        self.memo = QLineEdit(memo)
+        for w, hint in ((self.payment, "Payment"), (self.deposit, "Deposit")):
+            w.setValidator(amount_validator())
+            w.setPlaceholderText(hint)
+            w.setMaximumWidth(90)
+            w.textChanged.connect(self.changed)
+        link_payment_deposit(self.payment, self.deposit)
+        self.payment.textEdited.connect(self.amount_edited)
+        self.deposit.textEdited.connect(self.amount_edited)
+        self.memo.setPlaceholderText("Memo")
+        self.category.currentTextChanged.connect(self.changed)
+        remove = QToolButton()
+        remove.setIcon(sign_icon(NEG_COLOR, plus=False))
+        remove.setToolTip("Remove this split line")
+        remove.setAccessibleName("Remove this split line")
+        remove.clicked.connect(lambda: self.removed.emit(self))
+        policy = remove.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # keeps the columns of all lines aligned
+        remove.setSizePolicy(policy)
+        remove.setVisible(removable)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for w, stretch in ((self.category, 3), (self.payment, 0), (self.deposit, 0), (self.memo, 2), (remove, 0)):
+            lay.addWidget(w, stretch)
+
+    def set_amount(self, amount, credit=False):
+        self.payment.setText(f"{-amount:.2f}" if amount < 0 else "")
+        self.deposit.setText(f"{amount:.2f}" if amount > 0 else "")
+        if not amount:
+            (self.deposit if credit else self.payment).setText("0.00")
+
+    def amount(self):
+        return parse_amount(self.deposit.text()) - parse_amount(self.payment.text())
+
+
 # --------------------------------------------------------------------------- transaction
 
 
 class TransactionDialog(QDialog):
     """Create or edit one transaction. Amount is entered as Payment or Deposit, like Quicken.
-    `copy_of` starts a new, uncleared transaction dated today with the other fields of an existing one."""
+    `copy_of` starts a new, uncleared transaction dated today with the other fields of an existing one.
+    The + button adds split lines; a split can be saved once its lines add up to the amount."""
 
     def __init__(self, ledger, txn=None, account=None, parent=None, copy_of=None):
         super().__init__(parent)
         self.ledger = ledger
         self.is_new = txn is None
         self.setWindowTitle("Edit Transaction" if txn else "Copy Transaction" if copy_of else "New Transaction")
+        start_lines = (copy_of or txn).lines if copy_of or txn else ()
         if copy_of is not None:
             txn = copy_of.copy()
             txn.date, txn.is_cleared = dt.date.today(), False
-            if txn.is_split:  # new splits aren't supported, so a copy starts as a plain transaction
-                txn.split, txn.split_id, txn.category = "N", "NA", ""
+            if txn.is_split:  # a copy of a CountAbout {SPLIT} row has no lines to carry over
+                txn.split, txn.split_id, txn.category = "N", NO_SPLIT_ID, ""
+        elif txn is not None and txn.lines:
+            txn = txn.copy()  # the summary's total and shared fields; its lines are edited below
+            txn.split, txn.split_id, txn.category, txn.memo = "N", NO_SPLIT_ID, "", ""
         txn = txn or Transaction(account=account or "", date_str=dt.date.today().strftime("%m-%d-%Y"))
 
         self.account = QComboBox()
@@ -113,23 +195,36 @@ class TransactionDialog(QDialog):
         self.ref = QLineEdit(txn.ref)
         self.description = editable_combo(ledger.descriptions(), txn.description)
         self.category = editable_combo(category_choices(ledger), txn.category)
-        val = QDoubleValidator(0, 1e12, 2)
-        val.setNotation(QDoubleValidator.StandardNotation)
         self.payment = QLineEdit(f"{-txn.amount:.2f}" if txn.amount < 0 else "")
         self.deposit = QLineEdit(f"{txn.amount:.2f}" if txn.amount > 0 else "")
         for w in (self.payment, self.deposit):
-            w.setValidator(val)
-        self.payment.textEdited.connect(lambda s: s and self.deposit.clear())
-        self.deposit.textEdited.connect(lambda s: s and self.payment.clear())
+            w.setValidator(amount_validator())
+        link_payment_deposit(self.payment, self.deposit)
+        self.payment.textEdited.connect(self.absorb_difference)
+        self.deposit.textEdited.connect(self.absorb_difference)
         self.memo = QLineEdit(txn.memo)
         self.cleared = QCheckBox("Cleared")
         self.cleared.setChecked(txn.is_cleared)
         self.split_id, self.split, self.tags = txn.split_id, txn.split, txn.tags
 
-        if txn.is_split:
-            # The export carries no split detail; keep the {SPLIT} marker untouched.
-            self.category.setEnabled(False)
-            self.category.setToolTip("Split details are not available in CountAbout format")
+        self.old_split = txn.is_old_split
+        self.plain_category = txn.category
+        self.line_editors = []
+        self.line_box = QVBoxLayout()
+        self.line_box.setContentsMargins(0, 0, 0, 0)
+        self.start_split = self.add_line_button()  # beside Category, until there are lines
+        self.add_more = self.add_line_button()  # below the last line
+        self.line_box.addWidget(self.add_more, 0, Qt.AlignRight)
+        self.line_box.addStretch()
+        lines_widget = QWidget()
+        lines_widget.setLayout(self.line_box)
+        self.line_scroll = QScrollArea()
+        self.line_scroll.setWidgetResizable(True)
+        self.line_scroll.setWidget(lines_widget)
+        self.line_scroll.setMinimumHeight(130)
+        self.show_new_line = False
+        self.line_scroll.verticalScrollBar().rangeChanged.connect(self._scroll_to_new_line)
+        self.remaining = QLabel()
         if self.is_new:
             self.description.lineEdit().editingFinished.connect(self._autofill)
 
@@ -138,7 +233,10 @@ class TransactionDialog(QDialog):
         form.addRow("Date", self.date)
         form.addRow("Ref / Check #", self.ref)
         form.addRow("Description", self.description)
-        form.addRow("Category", self.category)
+        category_row = QHBoxLayout()
+        category_row.addWidget(self.category, 1)
+        category_row.addWidget(self.start_split)
+        form.addRow("Category", category_row)
         amt = QHBoxLayout()
         amt.addWidget(QLabel("Payment"))
         amt.addWidget(self.payment)
@@ -154,32 +252,161 @@ class TransactionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay = QVBoxLayout(self)
         lay.addLayout(form)
+        lay.addWidget(self.line_scroll, 1)
+        lay.addWidget(self.remaining)
         lay.addWidget(buttons)
-        self.resize(520, self.sizeHint().height())
-        if self.is_new:  # editing is exempt: existing rows may legitimately lack a category
-            self.ok_btn = buttons.button(QDialogButtonBox.Ok)
-            for field in (self.description.lineEdit(), self.category.lineEdit(), self.payment, self.deposit):
-                field.textChanged.connect(self._update_ok)
-            self._update_ok()
+        self.ok_btn = buttons.button(QDialogButtonBox.Ok)
+        for field in (self.description.lineEdit(), self.category.lineEdit(), self.payment, self.deposit):
+            field.textChanged.connect(self._update_ok)
+        for i, line in enumerate(start_lines):
+            self.add_line(line.category, line.amount, line.memo, removable=i > 0)
+        self._collapse_single_line()
+        self.category.currentTextChanged.connect(self._update_start_split)
+        self._update_start_split()
+        self._lines_changed()
+        self.resize(680, self.sizeHint().height())
+
+    def _update_start_split(self):
+        """Transfers can't be split: their mirror rows pair with one amount in one account."""
+        transfer = transfer_target(self.category.currentText()) is not None
+        self.start_split.setEnabled(not transfer)
+        self.start_split.setToolTip("Transfers can't be split" if transfer else "Add a split line")
+
+    def add_line_button(self):
+        button = QToolButton()
+        button.setIcon(sign_icon(POS_COLOR, plus=True))
+        button.setToolTip("Add a split line")
+        button.setAccessibleName("Add a split line")
+        button.clicked.connect(self.add_blank_line)
+        return button
+
+    def add_blank_line(self):
+        """Add a 0.00 line. The first time, the transaction itself also becomes a line, which
+        can't be removed on its own."""
+        if not self.line_editors:
+            if not self.old_split:
+                self.plain_category = self.category.currentText()
+            category = "" if self.plain_category.startswith("{") else self.plain_category
+            self.add_line(category, self.total(), self.memo.text(), removable=False)
+        self.add_line("", Decimal("0"), "")
+        self.show_new_line = True
+
+    def _scroll_to_new_line(self, _minimum, maximum):
+        """Keep the + below a newly added line in view, once the pane has grown to fit it."""
+        if self.show_new_line:
+            self.show_new_line = False
+            self.line_scroll.verticalScrollBar().setValue(maximum)
+
+    def add_line(self, category, amount, memo, removable=True):
+        line = SplitLineEditor(self.ledger.categories(), category, amount, memo, removable, self.total() > 0)
+        line.changed.connect(self._lines_changed)
+        line.removed.connect(self.remove_line)
+        if removable:  # edits to the first line itself show up in Remaining instead
+            line.amount_edited.connect(self.absorb_difference)
+        self.line_box.insertWidget(len(self.line_editors), line)
+        self.line_editors.append(line)
+        self._lines_changed()
+
+    def remove_line(self, line):
+        self.show_new_line = False
+        self.line_editors.remove(line)
+        line.deleteLater()
+        self._collapse_single_line()
+        self.absorb_difference()
+        self._lines_changed()
+
+    def absorb_difference(self):
+        """The first line takes whatever the total leaves after the other lines."""
+        if not self.line_editors:
+            return
+        try:
+            total = parse_amount(self.deposit.text()) - parse_amount(self.payment.text())
+            others = sum((line.amount() for line in self.line_editors[1:]), Decimal("0"))
+        except ValueError:
+            return
+        self.line_editors[0].set_amount(total - others, total > 0)
+
+    def _collapse_single_line(self):
+        """A lone remaining line is no longer a split: it becomes the transaction again."""
+        if len(self.line_editors) == 1:
+            line = self.line_editors.pop()
+            if not self.old_split:
+                self.plain_category = line.category.currentText().strip()
+            self.memo.setText(line.memo.text().strip())
+            line.deleteLater()
+
+    def total(self):
+        """The transaction's amount (zero while it is invalid)."""
+        try:
+            return parse_amount(self.deposit.text()) - parse_amount(self.payment.text())
+        except ValueError:
+            return Decimal("0")
+
+    def unassigned(self):
+        """The amount not yet covered by split lines (zero while a line's amount is invalid)."""
+        try:
+            return self.total() - sum((line.amount() for line in self.line_editors), Decimal("0"))
+        except ValueError:
+            return Decimal("0")
+
+    def _lines_changed(self):
+        """With split lines, they replace the transaction's own category and memo."""
+        split = bool(self.line_editors)
+        if not split and self.category.currentText() != SPLIT_CATEGORY:
+            self.plain_category = self.category.currentText()
+        self.category.setCurrentText(SPLIT_CATEGORY if split or self.old_split else self.plain_category)
+        self.category.setEnabled(not split and not self.old_split)
+        self.category.setToolTip("Set by the split lines" if split else "No split detail: use + to add it" if self.old_split else "")
+        self.memo.setEnabled(not split)
+        self.line_scroll.setVisible(split)
+        self.start_split.setVisible(not split)
+        self.remaining.setVisible(split)
+        self._update_ok()
+
+    def lines_ready(self):
+        """Every split line has a category and an amount, and together they make up the total."""
+        try:
+            amounts = [line.amount() for line in self.line_editors]
+        except ValueError:
+            return False
+        filled = all(line.category.currentText().strip() for line in self.line_editors)
+        return filled and all(amounts) and self.unassigned() == 0
+
+    def first_line_flipped(self):
+        """The first line runs opposite to the total: the other lines add up to more than it."""
+        try:
+            return self.line_editors[0].amount() * self.total() < 0
+        except ValueError:
+            return False
 
     def _update_ok(self):
-        """OK needs a description, a category, and a valid amount."""
+        """A new transaction needs a description, a category, and a valid amount (editing is
+        exempt: existing rows may legitimately lack a category). Split lines must add up."""
         amount = self.payment.text().strip() or self.deposit.text().strip()
         try:
             parse_amount(amount)
         except ValueError:
             amount = ""
         filled = self.description.currentText().strip() and self.category.currentText().strip()
-        self.ok_btn.setEnabled(bool(filled and amount))
+        ok = bool(filled and amount) or not self.is_new
+        if self.line_editors:
+            ok = ok and self.lines_ready()
+            note = f"Remaining: {money_html(self.unassigned())}"
+            if self.first_line_flipped():
+                side = "deposit" if self.total() < 0 else "payment"
+                note += f'&nbsp;&nbsp;<span style="color:#b46400">Warning: the first line is now a {side}.</span>'
+            self.remaining.setText(note)
+        self.ok_btn.setEnabled(ok)
 
     def _autofill(self):
         """Memorized-payee behavior: fill category and amount from the last use of this description."""
         desc = self.description.currentText()
         if not self.category.currentText():
             self.category.setCurrentText(self.ledger.last_category_for(desc))
+            self.plain_category = self.category.currentText()
         if not self.payment.text() and not self.deposit.text():
             last = max(
-                (t for t in self.ledger.transactions if t.description == desc),
+                (t for t in self.ledger.entries() if t.description == desc),
                 key=lambda t: t.date,
                 default=None,
             )
@@ -203,6 +430,21 @@ class TransactionDialog(QDialog):
         t.is_cleared = self.cleared.isChecked()
         return t
 
+    def result_lines(self):
+        """The ledger rows of a split, or [] if this is not one (see result_txn)."""
+        if not self.line_editors:
+            return []
+        split_id = new_split_id()
+        rows = []
+        for line in self.line_editors:
+            t = self.result_txn()
+            t.split, t.split_id = "Y", split_id
+            t.category = line.category.currentText().strip()
+            t.amount = line.amount()
+            t.memo = line.memo.text().strip()
+            rows.append(t)
+        return rows
+
     def accept(self):
         try:
             t = self.result_txn()
@@ -214,8 +456,10 @@ class TransactionDialog(QDialog):
             problems.append("Choose an account.")
         if t.transfer_account == t.account:
             problems.append("A transfer cannot go to the same account.")
-        if t.category == SPLIT_CATEGORY and not t.is_split:
-            problems.append("New split transactions are not supported by the CountAbout format.")
+        if t.category == SPLIT_CATEGORY and not t.is_split and not self.line_editors:
+            problems.append("Use the + button to add split lines.")
+        if any(line.category.currentText().strip().startswith("{") for line in self.line_editors):
+            problems.append("Split lines can't be transfers or {SPLIT}.")
         tgt = t.transfer_account
         if tgt is not None and tgt not in self.ledger.accounts():
             problems.append(f"Transfer account {tgt!r} does not exist.")
@@ -704,7 +948,7 @@ class ReconcileDialog(QDialog):
         end = pydate(self.stmt_date.date())
         self.list.blockSignals(True)
         self.txns = sorted(
-            (t for t in self.ledger.for_account(self.account) if not t.is_cleared and t.date <= end),
+            (t for t in self.ledger.entries(self.ledger.for_account(self.account)) if not t.is_cleared and t.date <= end),
             key=lambda t: t.date,
         )
         self.list.setRowCount(len(self.txns))
@@ -935,7 +1179,7 @@ class ReportDialog(QDialog):
 
     @staticmethod
     def cat_name(t):
-        if t.is_split:
+        if t.is_old_split:
             return "(split – details unavailable)"
         if t.transfer_account is not None:
             return f"Transfer: {t.transfer_account}"

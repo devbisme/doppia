@@ -297,3 +297,153 @@ def test_even_widths():
     # A column at its minimum drops out and the others share the rest.
     assert even_widths({"a": 15, "b": 50, "c": 50}, mins, 95) == {"a": 10, "b": 42, "c": 43}
     assert even_widths({"a": 50, "b": 50, "c": 50}, mins, 5) == mins  # minimums don't fit
+
+
+def split_rows(ledger, sid="abc123"):
+    """A $100 purchase split 60/40."""
+    return [
+        Transaction("Checking", "10-20-2026", "Costco", "Groceries", "Y", sid, "-60.00", "7", "food"),
+        Transaction("Checking", "10-20-2026", "Costco", "Household", "Y", sid, "-40.00", "7", ""),
+    ]
+
+
+def test_split_add_keeps_lines_adjacent_and_sums(ledger):
+    before = ledger.balance("Checking")
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    i = ledger.transactions.index(lines[0])
+    assert ledger.transactions[i + 1] is lines[1]
+    assert ledger.balance("Checking") == before - 100
+
+
+def test_split_roundtrip(ledger, tmp_path):
+    ledger.add_split(split_rows(ledger))
+    path = str(tmp_path / "out.csv")
+    ledger.save(path)
+    again = Ledger.load(path)
+    assert again.to_text() == ledger.to_text()
+    summary = next(t for t in again.entries() if t.lines)
+    assert [t.category for t in summary.lines] == ["Groceries", "Household"]
+
+
+def test_entries_collapses_splits_only(ledger):
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    entries = ledger.entries()
+    assert len(entries) == len(ledger.transactions) - 1
+    summary = next(t for t in entries if t.lines)
+    assert summary.lines == lines
+    assert (summary.category, summary.amount, summary.memo) == ("{SPLIT}", Decimal("-100.00"), "")
+    assert not summary.is_old_split
+    assert summary.transfer_account is None
+
+
+def test_old_split_row_is_unchanged(tmp_path):
+    text = HEADER + "Checking,10-20-2026,Costco,{SPLIT},Y,NA,-100.00,,,,X\n"
+    p = tmp_path / "old.csv"
+    p.write_text(text)
+    led = Ledger.load(str(p))
+    t = led.transactions[0]
+    assert t.is_old_split and t.split_group is None and led.entries() == [t]
+    assert led.to_text() == led.to_countabout_text() == text
+
+
+def test_ledger1_countabout_export(tmp_path):
+    led = Ledger.load(LEDGER1)
+    p = tmp_path / "export.csv"
+    p.write_text(led.to_countabout_text())
+    exported = Ledger.load(str(p))
+    assert len(exported.transactions) == len(led.entries())
+    assert not any(t.split_group for t in exported.transactions)
+    assert sum(t.amount for t in exported.transactions) == sum(t.amount for t in led.transactions)
+    assert next(t for t in exported.transactions if t.description == "Payee 0798" and t.is_split).memo == "Memo 1489; 2345"
+
+
+def test_split_cleared_and_delete_act_on_the_group(ledger):
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    n = len(ledger.transactions)
+    summary = next(t for t in ledger.entries() if t.lines)
+    ledger.set_cleared(summary, True)
+    assert summary.is_cleared and all(t.is_cleared for t in lines)
+    ledger.set_cleared(lines[1], False)
+    assert not any(t.is_cleared for t in lines)
+    ledger.delete(summary)
+    assert len(ledger.transactions) == n - 2
+
+
+def test_delete_rows_with_split_lines(ledger):
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    n = len(ledger.transactions)
+    summary = next(t for t in ledger.entries() if t.lines)
+    ledger.delete_rows(ledger.with_transfer_partners(ledger.with_split_lines([summary, lines[0]])))
+    assert len(ledger.transactions) == n - 2
+
+
+def test_replace_shared_field_updates_whole_split(ledger):
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    ledger.apply_replacements([(lines[0], "description", "Sam's"), (lines[1], "memo", "soap")])
+    assert [t.description for t in lines] == ["Sam's", "Sam's"]
+    assert [t.memo for t in lines] == ["food", "soap"]
+
+
+def test_update_split_keeps_place_and_handles_date_change(ledger):
+    lines = split_rows(ledger)
+    ledger.add_split(lines)
+    at = ledger.transactions.index(lines[0])
+    summary = next(t for t in ledger.entries() if t.lines)
+    new = [t.copy() for t in lines] + [lines[1].copy()]
+    new[1].amount, new[2].amount = Decimal("-30"), Decimal("-10")
+    ledger.update_split(summary, new)
+    assert ledger.transactions[at : at + 3] == new
+    summary = next(t for t in ledger.entries() if t.lines)
+    moved = [t.copy() for t in new]
+    for t in moved:
+        t.date = dt.date(2026, 11, 20)
+    ledger.update_split(summary, moved)
+    assert ledger.transactions[:3] == moved
+
+
+def test_plain_to_split_and_back(ledger):
+    power = ledger.transactions[0]
+    n = len(ledger.transactions)
+    a = Transaction("Checking", power.date_str, "Power Co", "Gas", "Y", "s1", "-100.00")
+    b = Transaction("Checking", power.date_str, "Power Co", "Electric", "Y", "s1", "-50.00")
+    ledger.update_split(power, [a, b])
+    assert ledger.transactions[:2] == [a, b] and len(ledger.transactions) == n + 1
+    summary = ledger.entries()[0]
+    plain = Transaction("Checking", power.date_str, "Power Co", "Utilities", amount_str="-150.00")
+    ledger.update_split(summary, [plain])
+    assert ledger.transactions[0] is plain and len(ledger.transactions) == n
+
+
+def test_transfer_to_split_removes_mirror_and_back_restores_it(ledger):
+    ck = ledger.transactions[3]
+    n = len(ledger.transactions)
+    a = Transaction("Checking", ck.date_str, "transfer", "Fees", "Y", "s1", "-20.00")
+    b = Transaction("Checking", ck.date_str, "transfer", "Misc", "Y", "s1", "-5.00")
+    ledger.update_split(ck, [a, b])
+    assert len(ledger.transactions) == n  # one mirror gone, one line more
+    assert not any(t.account == "Visa" and t.category == "{Checking}" for t in ledger.transactions)
+    back = Transaction("Checking", ck.date_str, "transfer", "{Visa}", amount_str="-25.00")
+    ledger.update_split(ledger.entries()[3], [back])
+    assert ledger.find_transfer_partner(back).amount == Decimal("25.00")
+
+
+def test_duplicate_detection_matches_split_total(ledger):
+    ledger.add_split(split_rows(ledger))
+    profile = Profile(date_col="d", description_col="x", amount_col="a")
+    cands = build_candidates(ledger, "Checking", [{"d": "10-20-2026", "x": "COSTCO", "a": "-100.00"}], profile)
+    assert cands[0].duplicate_of is not None and not cands[0].include
+    apply_candidates(ledger, cands)
+    assert all(t.is_cleared for t in cands[0].duplicate_of.lines)
+
+
+def test_countabout_export_collapses_splits(ledger):
+    ledger.add_split(split_rows(ledger))
+    text = ledger.to_countabout_text()
+    assert "Checking,10-20-2026,Costco,{SPLIT},Y,NA,-100.00,7,food,," in text
+    assert "abc123" not in text and "Household" not in text
+    assert "abc123" in ledger.to_text()  # the ledger itself is unchanged

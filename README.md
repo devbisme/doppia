@@ -96,7 +96,23 @@ with the dependencies it needs:
   - Click the Clr box to toggle cleared; cleared rows show a green ✔ (the CSV still stores `X`).
   - Double-click a row to edit it. Right-click for a menu to edit it, delete it, or copy it
     (**Copy** opens a new transaction filled in from that one, dated today and not cleared;
-    a copied split starts as a plain transaction with a blank category).
+    a copied split keeps its lines, and a copied CountAbout `{SPLIT}` row starts with a blank
+    category).
+- **Split transactions**: in the New/Edit Transaction dialog, the green + next to Category opens
+  a pane of lines, each with its own category, payment or deposit, and memo. The first line is the
+  original transaction, and a second line starts at 0.00. The + below the last line adds more, and
+  the red - on a line removes it. Removing all the added lines closes the pane. Enter the bank total as usual: the first line absorbs any change
+  to the total or the other lines. OK stays disabled until every line has a category and an amount
+  and **Remaining** reaches $0.00 (it can differ if you edit the first line directly). A warning
+  appears if the other lines exceed the total, so that the first line flips between payment and
+  deposit. Transfers can't be split, so the + is disabled for them, and lines can't be transfers.
+  - The register shows the `{SPLIT}` total and running balance with the lines indented below. A
+    split stays together under every sort, and highlighting, clearing, deleting, or editing any
+    of its rows acts on the whole split.
+  - Reports count each line under its own category. Reconcile and bank-import duplicate detection
+    use the split's total.
+  - Each line is stored as a CSV row with a shared `Split ID`, and there is no separate total row.
+  - Add lines to an existing CountAbout `{SPLIT}` row to give it detail.
 - New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared on each highlighted
   transaction. OK stays disabled on a new transaction until it has a description, a category,
   and an amount. The green + and red - buttons above the register add a transaction and delete
@@ -161,8 +177,11 @@ with the dependencies it needs:
 
 ## Limitations (from the CountAbout format)
 
-- Split transactions: existing `{SPLIT}` rows are preserved, but the export carries no
-  split detail, so new splits cannot be created and reports show splits as one lump.
+- Split transactions: CountAbout's export carries no split detail, so its `{SPLIT}` rows show as
+  one lump in reports until you add lines to them. Rows with a real `Split ID` are doppia's own
+  extension of the format, so use **File → Export for CountAbout…** to transfer a ledger: it
+  writes a separate CSV with each split as one `{SPLIT}` total row, without the line detail (line
+  memos are joined into that row's memo). The export hasn't been tested with a CountAbout import.
 - Balances are sums of rows; there is no separate opening-balance field. New accounts
   get a "Beginning Balance" row.
 - `Cleared` is X/blank only (no separate reconciled state).

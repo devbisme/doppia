@@ -8,7 +8,9 @@ Account,Date,Description,Category,Split,"Split ID",Amount,Ref,Memo,Tags,Cleared
 "Account 12",10-13-2026,Payee0006,Category109:Category097,N,NA,-103.72,,"Memo 1349",,X
 "Account 12",10-13-2026,"Payee 1107",Category109:Category105,N,NA,-45.00,,"Memo 0556",,X
 "Account 12",10-13-2026,"Payee 0831",Category082,N,NA,-2156.89,,"Memo 0500, more",,X
-"Account 12",10-12-2026,"Payee 0798",Category049,N,NA,-5.86,,"Memo 1489",,X
+"Account 12",10-12-2026,"Payee 0798",Category049,Y,b437060c8db4,-2.86,,"Memo 1489",,X
+"Account 12",10-12-2026,"Payee 0798","Category 011",Y,b437060c8db4,-2.00,,2345,,X
+"Account 12",10-12-2026,"Payee 0798","Category 027",Y,b437060c8db4,-1.00,,,,X
 "Account 12",10-12-2026,Payee0142,Category155,N,NA,-75.06,,"Memo 0827",,
 "Account 09",10-12-2026,Payee1121,"{Account 02}",N,NA,24.44,,,,
 "Account 02",10-12-2026,Payee1121,"{Account 09}",N,NA,-24.44,,,,X
