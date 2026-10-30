@@ -50,6 +50,18 @@ with the dependencies it needs:
     uv run doppia path/to/countabout-export.csv
     uv run --extra test pytest
 
+## What's new in 0.2.0
+
+- Right-click a transaction to **Edit** or **Copy** it. A copy is dated today and not cleared.
+- Green **+** and red **-** buttons replace the New, Edit, and Delete buttons.
+- Delete and Toggle cleared now act on every highlighted transaction.
+- **View → Hide cleared** replaces the Uncleared only checkbox, and **View → Hide future** is new.
+  A note beside the account name shows how many transactions are hidden, with a breakdown on hover.
+- OK stays disabled on a new transaction until it has a description, a category, and an amount.
+- Columns are sized to their contents on the first run, and **View → Resize columns to fit** refits
+  them on demand. The Clr column moved to the far right and the dates are centered.
+- The window size and position and the column widths are remembered between runs.
+
 ## Features
 
 - Account list with today's balance and cleared balance. The bold **Total** row sums both
@@ -60,8 +72,8 @@ with the dependencies it needs:
   visible on selected rows. `$` and commas are accepted when typing amounts.
 - Register per account or all accounts: running balance, **View → Hide cleared** and
   **View → Hide future** toggles (the Balance column still counts hidden rows; while rows are
-  hidden, a note beside the account name shows how many, and hovering over it gives the breakdown), and a filter
-  field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
+  hidden, a note beside the account name shows how many, and hovering over it gives the
+  breakdown), and a filter field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
   `\$3,000`) matched in the description, category, memo, ref, date, or amount. Its X button
   clears it; an invalid expression tints the field and is ignored. The account names over
   the register are cut to 30 characters, including `...` (hover for the full list).
@@ -69,14 +81,14 @@ with the dependencies it needs:
     combined transactions with a combined running balance. Reconcile and Rename account need
     a single account selected.
   - Column widths are remembered between runs. On the very first run they're sized to their
-    contents and, if they don't all
-    fit the pane, with Memo, then Description, Category, and Account narrowed as needed, each down
-    to the width that cuts off fewer than 5% of its entries. After that they're only changed by
-    dragging them or by **View → Resize columns to fit**. Date, Ref, Amount, Clr, and Balance widen when needed so they never truncate.
+    contents and, if they don't all fit the pane, Memo, then Description, Category, and Account
+    are narrowed as needed, each down to the width that cuts off fewer than 5% of its entries.
+    After that they're only changed by dragging them or by **View → Resize columns to fit**.
+    Date, Ref, Amount, and Balance widen when needed so they never truncate.
   - The Clr column is always just wide enough for its label.
-  - **View → Resize columns to fit** changes all the other columns by the same number of pixels to fill the
-    pane. When shrinking, Date, Ref, Amount, Clr, and Balance stop at their contents and the others
-    at their headers, and the remaining columns share the rest.
+  - **View → Resize columns to fit** changes every column except Clr by the same number of pixels
+    to fill the pane. When shrinking, Date, Ref, Amount, and Balance stop at their contents and the
+    others at their headers, and the remaining columns share the rest.
   - Click a column header to sort by it; click again to reverse. The sort column's header
     is highlighted, and the selection is kept when re-sorting. The register opens sorted by
     date, newest first. The Balance column is a date-order running balance, so it only
@@ -87,17 +99,16 @@ with the dependencies it needs:
     a copied split starts as a plain transaction with a blank category).
 - New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared on each highlighted
   transaction. OK stays disabled on a new transaction until it has a description, a category,
-  and an amount. The green + and red -
-  buttons above the register add a transaction and delete the highlighted ones (Ctrl/Shift-click
-  to highlight several); deleting always asks first and also removes the mirror row of a transfer.
+  and an amount. The green + and red - buttons above the register add a transaction and delete
+  the highlighted ones (Ctrl/Shift-click to highlight several); deleting always asks first and
+  also removes the mirror row of a transfer.
   Payee memory: typing a known description fills its last category and amount.
 - Search and replace (Transaction menu, Ctrl+H): find a regular expression in the
   Description, Category, Memo, Ref, and/or Tags fields (optionally case-sensitive, optionally
   only in the selected accounts). Check **Replace with** to preview each change (`\1` inserts a
   matched group), untick any you don't want (**Select All/None** flips them all), then
-  **Replace checked**. Transfer/split
-  categories and results containing line breaks can't be replaced. Nothing is written to the
-  file until you save.
+  **Replace checked**. Transfer/split categories and results containing line breaks can't be
+  replaced. Nothing is written to the file until you save.
 - Transfers use CountAbout's `{Account}` category; the mirror row in the other account
   is created/updated/deleted automatically (matched by date and negated amount).
 - Bank CSV import (Ctrl+I): column mapping saved as named profiles in
@@ -138,11 +149,12 @@ with the dependencies it needs:
     the regex). Run uses whatever rows are highlighted when pressed.
   - Total income, expense, and net rows reflect only the categories shown.
   - **Save…** writes the report as shown (current sort order) to CSV (plain signed numbers for
-    spreadsheets), Markdown, plain text (aligned columns), or PDF. Markdown, text, and PDF include the report settings (dates,
-    accounts, category filters) and show amounts with a minus sign, since they may be printed
-    without color. Wide month-by-category reports print landscape in a smaller font.
+    spreadsheets), Markdown, plain text (aligned columns), or PDF. Markdown, text, and PDF
+    include the report settings (dates, accounts, category filters) and show amounts with a
+    minus sign, since they may be printed without color. Wide month-by-category reports print landscape in a smaller font.
 - View → Font… sets the font family, style (regular/italic/bold), and size for the whole
-  app; the choice is remembered. View → Reset font returns to the system default.
+  app; the choice is remembered. View → Reset font returns to the system default. After a
+  font change, View → Resize columns to fit refits the columns.
 - The window's size and position are remembered between runs.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
 - Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.15 s to switch accounts.
