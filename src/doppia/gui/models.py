@@ -118,8 +118,8 @@ class RegisterModel(QAbstractTableModel):
     """Rows of one account, several accounts, or all accounts, newest first, with running balance.
     `account` is an account name, a collection of names, or None for all accounts."""
 
-    COLS = ["Date", "Account", "Ref", "Description", "Category", "Memo", "Amount", "Balance", "Clr"]
-    C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_MEMO, C_AMOUNT, C_BAL, C_CLR = range(len(COLS))
+    COLS = ["Date", "Account", "Ref", "Description", "Category", "Amount", "Balance", "Clr", "Memo"]
+    C_DATE, C_ACCOUNT, C_REF, C_DESC, C_CAT, C_AMOUNT, C_BAL, C_CLR, C_MEMO = range(len(COLS))
 
     def __init__(self, ledger, account=None):
         super().__init__()
