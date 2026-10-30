@@ -50,6 +50,26 @@ with the dependencies it needs:
     uv run doppia path/to/countabout-export.csv
     uv run --extra test pytest
 
+## What's new in 0.3.0
+
+- **Split transactions.** The green **+** next to Category in the transaction dialog divides a
+  transaction into lines, each with its own category, payment or deposit, and memo. The first
+  line absorbs any change to the total or the other lines. A warning appears if it flips between
+  payment and deposit. Transfers can't be split.
+  - The register shows the `{SPLIT}` total with the lines indented below, and a split stays
+    together under every sort. Highlighting, clearing, deleting, or editing any of its rows acts
+    on the whole split.
+  - Reports count each line under its own category. Reconcile and bank-import duplicate detection
+    use the total.
+  - Lines can be added to an existing CountAbout `{SPLIT}` row.
+- **File → Export for CountAbout…** writes a separate CSV in CountAbout's format, with each split
+  as one `{SPLIT}` total row. Split lines are stored as rows with a shared `Split ID`, which
+  CountAbout's own export never writes, so use this to transfer a ledger. It hasn't been tested
+  with a CountAbout import.
+- Drag a column header to reorder the register. The order is remembered between runs, and
+  **View → Reset column order** restores the default.
+- The Memo column is now last by default, after Clr.
+
 ## What's new in 0.2.0
 
 - Right-click a transaction to **Edit** or **Copy** it. A copy is dated today and not cleared.
