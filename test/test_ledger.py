@@ -447,3 +447,22 @@ def test_countabout_export_collapses_splits(ledger):
     assert "Checking,10-20-2026,Costco,{SPLIT},Y,NA,-100.00,7,food,," in text
     assert "abc123" not in text and "Household" not in text
     assert "abc123" in ledger.to_text()  # the ledger itself is unchanged
+
+
+def test_new_ledger_builds_and_roundtrips(tmp_path):
+    led = Ledger()
+    assert led.accounts() == [] and led.entries() == [] and not led.dirty
+    assert led.to_text() == HEADER
+    led.create_account("Checking", Decimal("100"))
+    led.add(Transaction("Checking", "10-20-2026", "Grocer", "Groceries", amount_str="-12.34"))
+    assert led.dirty
+    path = str(tmp_path / "new.csv")
+    led.save(path)
+    assert Ledger.load(path).to_text() == led.to_text()
+    assert Ledger.load(path).balance("Checking") == Decimal("87.66")
+
+
+def test_header_only_file_loads(tmp_path):
+    p = tmp_path / "empty.csv"
+    p.write_text(HEADER)
+    assert Ledger.load(str(p)).transactions == []
