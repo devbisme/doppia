@@ -227,7 +227,8 @@ class RegisterFilter(QSortFilterProxyModel):
     def __init__(self):
         super().__init__()
         self.pattern = None
-        self.uncleared_only = False
+        self.hide_cleared = False
+        self.hide_future = False
 
     def sort(self, column, order=Qt.AscendingOrder):
         """Delegate sorting to the source model (much faster than the proxy's comparison sort)."""
@@ -258,13 +259,19 @@ class RegisterFilter(QSortFilterProxyModel):
         self.invalidateFilter()
         return error
 
-    def set_uncleared_only(self, on):
-        self.uncleared_only = on
+    def set_hide_cleared(self, on):
+        self.hide_cleared = on
+        self.invalidateFilter()
+
+    def set_hide_future(self, on):
+        self.hide_future = on
         self.invalidateFilter()
 
     def filterAcceptsRow(self, row, parent):
         t = self.sourceModel().txn(row)
-        if self.uncleared_only and t.is_cleared:
+        if self.hide_cleared and t.is_cleared:
+            return False
+        if self.hide_future and t.date > self.sourceModel().today:
             return False
         if self.pattern is None:
             return True

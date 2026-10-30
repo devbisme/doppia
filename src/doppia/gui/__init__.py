@@ -10,7 +10,6 @@ from PySide6.QtGui import QAction, QFont, QFontMetrics, QIcon, QKeySequence, QPa
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
     QFileDialog,
     QFontDialog,
     QHBoxLayout,
@@ -115,9 +114,16 @@ class MainWindow(QMainWindow):
         self.search.setToolTip(self.filter_help)
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.filter_changed)
-        self.uncleared = QCheckBox("Uncleared only")
-        self.uncleared.toggled.connect(self.proxy.set_uncleared_only)
         self.title = QLabel()
+        self.hidden_note = QLabel()
+        self.hidden_note.setStyleSheet("color: rgb(180, 100, 0);")
+        # Filtering can emit thousands of row signals; update once after they've all arrived.
+        self.note_timer = QTimer(self)
+        self.note_timer.setSingleShot(True)
+        self.note_timer.setInterval(0)
+        self.note_timer.timeout.connect(self.update_hidden_note)
+        for signal in (self.proxy.modelReset, self.proxy.rowsInserted, self.proxy.rowsRemoved):
+            signal.connect(self.note_timer.start)
         self.txn_btns = []
         for icon, tip, slot in (
             (sign_icon(POS_COLOR, plus=True), "New transaction", self.new_txn),
@@ -132,15 +138,16 @@ class MainWindow(QMainWindow):
 
         bar = QHBoxLayout()
         bar.addWidget(self.title)
+        bar.addWidget(self.hidden_note)
         bar.addStretch()
         bar.addWidget(self.search, 1)
-        bar.addWidget(self.uncleared)
         for b in self.txn_btns:
             bar.addWidget(b)
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addLayout(bar)
+        bar.addSpacing(bar.spacing())  # same gap after the last button as between the buttons
         rl.addWidget(self.view)
 
         self.split = QSplitter()
@@ -199,6 +206,9 @@ class MainWindow(QMainWindow):
         act(m, "Rename &category…", self.rename_category)
 
         m = self.menuBar().addMenu("&View")
+        act(m, "&Hide cleared", self.proxy.set_hide_cleared).setCheckable(True)
+        act(m, "Hide f&uture", self.proxy.set_hide_future).setCheckable(True)
+        m.addSeparator()
         act(m, "&Font…", self.choose_font)
         act(m, "&Reset font", self.reset_font)
 
@@ -341,6 +351,21 @@ class MainWindow(QMainWindow):
         short = names if len(names) <= TITLE_MAX else names[: TITLE_MAX - 3] + "..."
         self.title.setText(short)
         self.title.setToolTip(names if short != names else "")
+
+    def update_hidden_note(self):
+        """Say so when the View toggles or the filter are hiding transactions."""
+        shown, total = self.proxy.rowCount(), self.model.rowCount()
+        reasons = [
+            label
+            for label, active in (
+                ("Hide cleared", self.proxy.hide_cleared),
+                ("Hide future", self.proxy.hide_future),
+                ("Filter", self.proxy.pattern is not None),
+            )
+            if active
+        ]
+        self.hidden_note.setText(f"{shown:,} of {total:,} shown" if shown < total else "")
+        self.hidden_note.setToolTip(", ".join(reasons))
 
     def filter_changed(self, text):
         error = self.proxy.set_text(text)

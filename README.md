@@ -58,8 +58,10 @@ with the dependencies it needs:
 - Money is shown as `$1,234.56`: red for negative, green for positive, no minus sign
   (the minus is kept only in plain-text messages that can't be colored). Colors stay
   visible on selected rows. `$` and commas are accepted when typing amounts.
-- Register per account or all accounts: running balance, uncleared-only filter, and a
-  filter field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
+- Register per account or all accounts: running balance, **View → Hide cleared** and
+  **View → Hide future** toggles (the Balance column still counts hidden rows; while rows are
+  hidden, a note beside the account name shows how many are shown), and a filter
+  field that takes a case-insensitive regular expression (e.g. `^amazon`, `3000`,
   `\$3,000`) matched in the description, category, memo, ref, date, or amount. Its X button
   clears it; an invalid expression tints the field and is ignored. The account names over
   the register are cut to 30 characters, including `...` (hover for the full list).
@@ -75,7 +77,8 @@ with the dependencies it needs:
     (**Copy** opens a new transaction filled in from that one, dated today and not cleared;
     a copied split starts as a plain transaction with a blank category).
 - New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared on each highlighted
-  transaction. The green + and red -
+  transaction. OK stays disabled on a new transaction until it has a description, a category,
+  and an amount. The green + and red -
   buttons above the register add a transaction and delete the highlighted ones (Ctrl/Shift-click
   to highlight several); deleting always asks first and also removes the mirror row of a transfer.
   Payee memory: typing a known description fills its last category and amount.

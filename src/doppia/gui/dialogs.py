@@ -156,6 +156,21 @@ class TransactionDialog(QDialog):
         lay.addLayout(form)
         lay.addWidget(buttons)
         self.resize(520, self.sizeHint().height())
+        if self.is_new:  # editing is exempt: existing rows may legitimately lack a category
+            self.ok_btn = buttons.button(QDialogButtonBox.Ok)
+            for field in (self.description.lineEdit(), self.category.lineEdit(), self.payment, self.deposit):
+                field.textChanged.connect(self._update_ok)
+            self._update_ok()
+
+    def _update_ok(self):
+        """OK needs a description, a category, and a valid amount."""
+        amount = self.payment.text().strip() or self.deposit.text().strip()
+        try:
+            parse_amount(amount)
+        except ValueError:
+            amount = ""
+        filled = self.description.currentText().strip() and self.category.currentText().strip()
+        self.ok_btn.setEnabled(bool(filled and amount))
 
     def _autofill(self):
         """Memorized-payee behavior: fill category and amount from the last use of this description."""
