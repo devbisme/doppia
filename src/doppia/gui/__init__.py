@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.context_menu)
         hdr = self.view.horizontalHeader()
+        hdr.setSectionsMovable(True)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setSectionResizeMode(RegisterModel.C_CLR, QHeaderView.Fixed)
         hdr.setMinimumSectionSize(1)  # the default is wider than the snug Clr column
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(RegisterModel.C_DATE, Qt.DescendingOrder)
 
+        self.restore_column_order()
         self.columns_fitted = False
         self.model.modelReset.connect(self.size_fixed_columns)
 
@@ -220,6 +222,7 @@ class MainWindow(QMainWindow):
         act(m, "&Hide cleared", self.proxy.set_hide_cleared).setCheckable(True)
         act(m, "Hide f&uture", self.proxy.set_hide_future).setCheckable(True)
         act(m, "Resize &columns to fit", self.resize_columns)
+        act(m, "Reset column &order", self.reset_column_order)
         m.addSeparator()
         act(m, "&Font…", self.choose_font)
         act(m, "&Reset font", self.reset_font)
@@ -311,7 +314,26 @@ class MainWindow(QMainWindow):
                 self.view.setColumnWidth(col, saved[name])
         self.size_fixed_columns()  # the data may have outgrown a saved width
 
+    def restore_column_order(self):
+        """Put the columns in their saved order. It is stored by name, so a column added in a
+        later version just stays at the end."""
+        try:
+            saved = [n for n in json.loads(self.settings.value("column_order") or "[]") if n in RegisterModel.COLS]
+        except (TypeError, ValueError):
+            return
+        hdr = self.view.horizontalHeader()
+        for position, name in enumerate(saved):
+            hdr.moveSection(hdr.visualIndex(RegisterModel.COLS.index(name)), position)
+
+    def reset_column_order(self):
+        hdr = self.view.horizontalHeader()
+        for col in range(hdr.count()):
+            hdr.moveSection(hdr.visualIndex(col), col)
+
     def save_columns(self):
+        hdr = self.view.horizontalHeader()
+        order = sorted(RegisterModel.COLS, key=lambda name: hdr.visualIndex(RegisterModel.COLS.index(name)))
+        self.settings.setValue("column_order", json.dumps(order))
         if self.columns_fitted:  # before a ledger loads, the widths are only placeholders
             self.view.setColumnHidden(RegisterModel.C_ACCOUNT, False)  # a hidden column reads as 0
             widths = {name: self.view.columnWidth(col) for col, name in enumerate(RegisterModel.COLS)}

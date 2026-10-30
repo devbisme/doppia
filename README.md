@@ -89,6 +89,8 @@ with the dependencies it needs:
   - **View → Resize columns to fit** changes every column except Clr by the same number of pixels
     to fill the pane. When shrinking, Date, Ref, Amount, and Balance stop at their contents and the
     others at their headers, and the remaining columns share the rest.
+  - Drag a column header to move the column. The order is remembered between runs, and
+    **View → Reset column order** restores the default.
   - Click a column header to sort by it; click again to reverse. The sort column's header
     is highlighted, and the selection is kept when re-sorting. The register opens sorted by
     date, newest first. The Balance column is a date-order running balance, so it only
