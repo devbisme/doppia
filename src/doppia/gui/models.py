@@ -177,12 +177,12 @@ class RegisterModel(QAbstractTableModel):
     def txn(self, row):
         return self.rows[row]
 
-    def txn_changed(self, txn):
-        """Repaint one transaction's row without resetting the model."""
-        for r, t in enumerate(self.rows):
-            if t is txn:
-                self.dataChanged.emit(self.index(r, 0), self.index(r, len(self.COLS) - 1))
-                return
+    def txns_changed(self, txns):
+        """Repaint these transactions' rows without resetting the model."""
+        ids = {id(t) for t in txns}
+        rows = [r for r, t in enumerate(self.rows) if id(t) in ids]
+        if rows:
+            self.dataChanged.emit(self.index(rows[0], 0), self.index(rows[-1], len(self.COLS) - 1))
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():

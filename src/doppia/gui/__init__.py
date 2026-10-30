@@ -5,8 +5,8 @@ import os
 import sys
 from decimal import Decimal
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -21,9 +21,9 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QTableView,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -32,10 +32,33 @@ from PySide6.QtWidgets import (
 
 from ..ledger import Ledger
 from .dialogs import ClipboardImportDialog, ImportDialog, ReconcileDialog, ReplaceDialog, ReportDialog, TransactionDialog, parse_amount
-from .models import PaddedDelegate, RegisterFilter, RegisterModel, keep_colors_when_selected, money, money_color
+from .models import (
+    NEG_COLOR,
+    POS_COLOR,
+    PaddedDelegate,
+    RegisterFilter,
+    RegisterModel,
+    keep_colors_when_selected,
+    money,
+    money_color,
+)
 
 ALL_ACCOUNTS = "All accounts"
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
+
+
+def sign_icon(brush, plus):
+    """A plus or minus sign painted as bars, so it looks the same in any font."""
+    size, thick, inset = 64, 14, 6
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    p = QPainter(pixmap)
+    mid = (size - thick) // 2
+    p.fillRect(inset, mid, size - 2 * inset, thick, brush)
+    if plus:
+        p.fillRect(mid, inset, thick, size - 2 * inset, brush)
+    p.end()
+    return QIcon(pixmap)
 
 
 class MainWindow(QMainWindow):
@@ -95,18 +118,24 @@ class MainWindow(QMainWindow):
         self.uncleared = QCheckBox("Uncleared only")
         self.uncleared.toggled.connect(self.proxy.set_uncleared_only)
         self.title = QLabel()
-        btns = []
-        for text, slot in (("New", self.new_txn), ("Edit", self.edit_txn), ("Delete", self.delete_txn)):
-            b = QPushButton(text)
+        self.txn_btns = []
+        for icon, tip, slot in (
+            (sign_icon(POS_COLOR, plus=True), "New transaction", self.new_txn),
+            (sign_icon(NEG_COLOR, plus=False), "Delete transactions", self.delete_txn),
+        ):
+            b = QToolButton()
+            b.setIcon(icon)
+            b.setToolTip(tip)
+            b.setAccessibleName(tip)
             b.clicked.connect(slot)
-            btns.append(b)
+            self.txn_btns.append(b)
 
         bar = QHBoxLayout()
         bar.addWidget(self.title)
         bar.addStretch()
         bar.addWidget(self.search, 1)
         bar.addWidget(self.uncleared)
-        for b in btns:
+        for b in self.txn_btns:
             bar.addWidget(b)
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -193,6 +222,8 @@ class MainWindow(QMainWindow):
         everything that was sized in pixels."""
         QApplication.setFont(font)
         fm = QFontMetrics(font)
+        for b in self.txn_btns:
+            b.setIconSize(QSize(fm.height(), fm.height()))
         self.view.verticalHeader().setDefaultSectionSize(fm.height() + 6)
         for col, chars in enumerate(self.REGISTER_COL_CHARS):
             self.view.setColumnWidth(col, chars * fm.averageCharWidth())
@@ -444,7 +475,8 @@ class MainWindow(QMainWindow):
 
     def on_click(self, idx):
         if idx.column() == RegisterModel.C_CLR:
-            self.toggle_cleared()
+            # Only the clicked box, even if other rows are highlighted.
+            self.toggle_txns([self.model.txn(self.proxy.mapToSource(idx).row())])
 
     def on_double_click(self, idx):
         if idx.column() != RegisterModel.C_CLR:
@@ -462,28 +494,54 @@ class MainWindow(QMainWindow):
         menu.addAction("Delete transaction", self.delete_txn)
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
+    def selected_txns(self):
+        """Highlighted transactions, or the current one if nothing is highlighted."""
+        rows = {i.row() for i in self.view.selectionModel().selectedIndexes()}
+        if not rows:
+            t = self.current_txn()
+            return [t] if t is not None else []
+        return [self.model.txn(self.proxy.mapToSource(self.proxy.index(r, 0)).row()) for r in sorted(rows)]
+
     def delete_txn(self):
-        t = self.current_txn()
-        if t is None:
-            return
+        txns = self.selected_txns()
+        if len(txns) > 1:
+            self.delete_txns(txns)
+        elif txns:
+            self.delete_one(txns[0])
+
+    def delete_txns(self, txns):
+        rows = self.ledger.with_transfer_partners(txns)
+        msg = f"Delete {len(txns)} transactions?"
+        if len(rows) > len(txns):
+            msg += f"\n\n{len(rows) - len(txns)} matching transfer entries in other accounts will also be deleted."
+        if QMessageBox.question(self, "Delete", msg, defaultButton=QMessageBox.No) == QMessageBox.Yes:
+            row = min(i.row() for i in self.view.selectionModel().selectedIndexes())
+            self.ledger.delete_rows(rows)
+            self.changed()
+            self.view.selectRow(min(row, self.proxy.rowCount() - 1))
+
+    def delete_one(self, t):
         partner = self.ledger.find_transfer_partner(t)
         msg = f"Delete {t.date_str} {t.description} {money(t.amount, signed=True)}?"
         if partner is not None:
             msg += f"\n\nThe matching transfer entry in {partner.account} will also be deleted."
         if QMessageBox.question(self, "Delete", msg) == QMessageBox.Yes:
-            row = self.view.currentIndex().row()
+            row = self.proxy.mapFromSource(self.model.index(self.model.rows.index(t), 0)).row()
             self.ledger.delete(t)
             self.changed()
             self.view.selectRow(min(row, self.proxy.rowCount() - 1))
 
     def toggle_cleared(self):
-        t = self.current_txn()
-        if t is None:
+        self.toggle_txns(self.selected_txns())
+
+    def toggle_txns(self, txns):
+        if not txns:
             return
-        self.ledger.set_cleared(t, not t.is_cleared)
+        for t in txns:
+            self.ledger.set_cleared(t, not t.is_cleared)
         # Clearing doesn't change row order or running balances, so update in place
         # rather than resetting the register (which would lose the scroll position).
-        self.model.txn_changed(t)
+        self.model.txns_changed(txns)
         self.refresh_accounts(reset_register=False)
 
     def search_replace(self):

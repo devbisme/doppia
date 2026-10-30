@@ -74,7 +74,10 @@ with the dependencies it needs:
   - Double-click a row to edit it. Right-click for a menu to edit it, delete it, or copy it
     (**Copy** opens a new transaction filled in from that one, dated today and not cleared;
     a copied split starts as a plain transaction with a blank category).
-- New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared.
+- New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared on each highlighted
+  transaction. The green + and red -
+  buttons above the register add a transaction and delete the highlighted ones (Ctrl/Shift-click
+  to highlight several); deleting always asks first and also removes the mirror row of a transfer.
   Payee memory: typing a known description fills its last category and amount.
 - Search and replace (Transaction menu, Ctrl+H): find a regular expression in the
   Description, Category, Memo, Ref, and/or Tags fields (optionally case-sensitive, optionally

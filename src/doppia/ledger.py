@@ -11,6 +11,7 @@ import datetime as dt
 import functools
 import os
 import shutil
+from collections import defaultdict
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
 
@@ -318,6 +319,35 @@ class Ledger:
         self.transactions.remove(txn)
         if partner is not None:
             self.transactions.remove(partner)
+        self.dirty = True
+
+    def with_transfer_partners(self, txns):
+        """The given rows plus each transfer's mirror row. Each mirror pairs with one transfer,
+        preferring a mirror that is itself in `txns`, so identical transfers keep their own pairs."""
+        by_key = defaultdict(list)
+        for t in self.transactions:
+            if t.transfer_account is not None:
+                by_key[t.account, t.transfer_account, t.date_str, t.amount].append(t)
+        chosen = {id(t) for t in txns}
+        paired = set()
+        out = list(txns)
+        for t in txns:
+            if id(t) in paired or t.transfer_account is None:
+                continue
+            paired.add(id(t))
+            rows = by_key[t.transfer_account, t.account, t.date_str, -t.amount]
+            free = [r for r in rows if id(r) not in paired]
+            partner = next((r for r in free if id(r) in chosen), free[0] if free else None)
+            if partner is not None:
+                paired.add(id(partner))
+                if id(partner) not in chosen:
+                    out.append(partner)
+        return out
+
+    def delete_rows(self, txns):
+        """Remove exactly these rows (see with_transfer_partners for including mirrors)."""
+        doomed = {id(t) for t in txns}
+        self.transactions = [t for t in self.transactions if id(t) not in doomed]
         self.dirty = True
 
     def set_cleared(self, txn, cleared):

@@ -247,3 +247,23 @@ def test_llm_guess_profile_checks(monkeypatch):
     answer.update(date_col="Desc")
     p, problems = llm.guess_profile(header, rows, "Card")
     assert problems and "date column" in problems[0]
+
+
+def test_delete_rows_with_transfer_partners(ledger):
+    power, _, visa, checking, salary = ledger.transactions
+    # Both sides of a transfer selected: each is deleted once.
+    rows = ledger.with_transfer_partners([power, visa, checking])
+    assert len(rows) == 3
+    ledger.delete_rows(rows)
+    assert ledger.transactions[1:] == [salary] and ledger.dirty
+
+    # Identical same-day transfers: each keeps its own mirror.
+    led = Ledger()
+    for _ in range(2):
+        t = Transaction("Checking", "10-19-2026", "x", "{Visa}", amount_str="-25.00")
+        led.add(t)
+    a, b = [t for t in led.transactions if t.account == "Checking"]
+    rows = led.with_transfer_partners([a, b])
+    assert len(rows) == 4
+    led.delete_rows(rows)
+    assert led.transactions == []
