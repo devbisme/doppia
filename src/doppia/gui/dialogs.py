@@ -89,13 +89,19 @@ def category_choices(ledger):
 
 
 class TransactionDialog(QDialog):
-    """Create or edit one transaction. Amount is entered as Payment or Deposit, like Quicken."""
+    """Create or edit one transaction. Amount is entered as Payment or Deposit, like Quicken.
+    `copy_of` starts a new, uncleared transaction dated today with the other fields of an existing one."""
 
-    def __init__(self, ledger, txn=None, account=None, parent=None):
+    def __init__(self, ledger, txn=None, account=None, parent=None, copy_of=None):
         super().__init__(parent)
         self.ledger = ledger
         self.is_new = txn is None
-        self.setWindowTitle("New Transaction" if self.is_new else "Edit Transaction")
+        self.setWindowTitle("Edit Transaction" if txn else "Copy Transaction" if copy_of else "New Transaction")
+        if copy_of is not None:
+            txn = copy_of.copy()
+            txn.date, txn.is_cleared = dt.date.today(), False
+            if txn.is_split:  # new splits aren't supported, so a copy starts as a plain transaction
+                txn.split, txn.split_id, txn.category = "N", "NA", ""
         txn = txn or Transaction(account=account or "", date_str=dt.date.today().strftime("%m-%d-%Y"))
 
         self.account = QComboBox()

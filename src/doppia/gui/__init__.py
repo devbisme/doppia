@@ -432,6 +432,16 @@ class MainWindow(QMainWindow):
             self.ledger.update(t, dlg.result_txn())
             self.changed(t)
 
+    def copy_txn(self):
+        t = self.current_txn()
+        if t is None:
+            return
+        dlg = TransactionDialog(self.ledger, parent=self, copy_of=t)
+        if dlg.exec():
+            new = dlg.result_txn()
+            self.ledger.add(new)
+            self.changed(new)
+
     def on_click(self, idx):
         if idx.column() == RegisterModel.C_CLR:
             self.toggle_cleared()
@@ -446,6 +456,9 @@ class MainWindow(QMainWindow):
             return
         self.view.setCurrentIndex(idx)
         menu = QMenu(self)
+        menu.addAction("Edit", self.edit_txn)
+        menu.addAction("Copy", self.copy_txn)
+        menu.addSeparator()
         menu.addAction("Delete transaction", self.delete_txn)
         menu.exec(self.view.viewport().mapToGlobal(pos))
 

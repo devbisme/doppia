@@ -71,7 +71,9 @@ with the dependencies it needs:
     date, newest first. The Balance column is a date-order running balance, so it only
     adds up when sorted by date.
   - Click the Clr box to toggle cleared; cleared rows show a green ✔ (the CSV still stores `X`).
-  - Double-click a row to edit it; right-click for a menu to delete it.
+  - Double-click a row to edit it. Right-click for a menu to edit it, delete it, or copy it
+    (**Copy** opens a new transaction filled in from that one, dated today and not cleared;
+    a copied split starts as a plain transaction with a blank category).
 - New/edit/delete (Ctrl+N / Ctrl+E / Ctrl+Del), Ctrl+K toggles cleared.
   Payee memory: typing a known description fills its last category and amount.
 - Search and replace (Transaction menu, Ctrl+H): find a regular expression in the

@@ -15,7 +15,7 @@ SAMPLE = HEADER + (
     "Checking,10-19-2026,transfer,{Visa},N,NA,-25.00,,,,X\n"
     'Checking,10-16-2026,Employer,Salary,N,NA,3000.00,,"say ""hi"", ok",,X\n'
 )
-REAL = os.path.join(os.path.dirname(__file__), "..", "countabout-export-2026-10-26.csv")
+LEDGER1 = os.path.join(os.path.dirname(__file__), "ledger1.csv")  # large anonymized ledger
 
 
 @pytest.fixture
@@ -29,10 +29,9 @@ def test_roundtrip_sample(ledger):
     assert ledger.to_text() == SAMPLE
 
 
-@pytest.mark.skipif(not os.path.exists(REAL), reason="real export not present")
-def test_roundtrip_real_export():
-    with open(REAL, newline="") as f:
-        assert Ledger.load(REAL).to_text() == f.read()
+def test_roundtrip_ledger1():
+    with open(LEDGER1, newline="") as f:
+        assert Ledger.load(LEDGER1).to_text() == f.read()
 
 
 def test_save_makes_backup(ledger):
