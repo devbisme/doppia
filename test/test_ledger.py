@@ -267,3 +267,21 @@ def test_delete_rows_with_transfer_partners(ledger):
     assert len(rows) == 4
     led.delete_rows(rows)
     assert led.transactions == []
+
+
+def test_fit_columns():
+    from doppia.gui.models import fit_widths, untruncated_width
+
+    # Fewer than 5% may be cut off: none of 20 entries (1 would be exactly 5%), 1 of 21, 2 of 41.
+    assert untruncated_width(list(range(1, 21))) == 20
+    assert untruncated_width(list(range(1, 22))) == 20
+    assert untruncated_width(list(range(1, 42))) == 39
+    assert untruncated_width([]) == 0
+
+    widths = {"memo": 100, "desc": 80, "cat": 60, "date": 50}
+    floors = {"memo": 40, "desc": 50, "cat": 55, "date": 50}
+    order = ["memo", "desc", "cat"]
+    assert fit_widths(widths, floors, order, 500) == widths  # already fits
+    assert fit_widths(widths, floors, order, 270) == {**widths, "memo": 80}  # only memo needed
+    assert fit_widths(widths, floors, order, 200) == {**widths, "memo": 40, "desc": 50}
+    assert fit_widths(widths, floors, order, 10) == {**floors}  # can't fit: stops at the floors

@@ -75,6 +75,29 @@ def money_html(value):
     return f'<span style="color:{brush.color().name()}">{text}</span>' if brush else text
 
 
+def untruncated_width(widths):
+    """Smallest width that cuts off fewer than 5% of these text widths."""
+    if not widths:
+        return 0
+    widths = sorted(widths)
+    return widths[len(widths) - 1 - (len(widths) - 1) // 20]
+
+
+def fit_widths(widths, floors, order, available):
+    """Shrink columns to fit `available`, taking each column in `order` as far as its floor
+    before touching the next. May still exceed `available` if the floors don't fit."""
+    widths = dict(widths)
+    excess = sum(widths.values()) - available
+    for col in order:
+        if excess <= 0:
+            break
+        cut = min(excess, widths[col] - floors[col])
+        if cut > 0:
+            widths[col] -= cut
+            excess -= cut
+    return widths
+
+
 class RegisterModel(QAbstractTableModel):
     """Rows of one account, several accounts, or all accounts, newest first, with running balance.
     `account` is an account name, a collection of names, or None for all accounts."""
@@ -163,6 +186,24 @@ class RegisterModel(QAbstractTableModel):
         self.changePersistentIndexList(old, [self.index(pos[id(t)], i.column()) for t, i in zip(txns, old)])
         self.layoutChanged.emit()
 
+    def column_texts(self, column):
+        """Displayed text of every row in a column (faster than data() when measuring)."""
+        if column == self.C_AMOUNT:
+            return [money(t.amount) for t in self.rows]
+        if column == self.C_BAL:
+            return [money(b) for b in self.balances]
+        if column == self.C_CLR:
+            return [CLEARED_MARK] if self.rows else []
+        attr = {
+            self.C_DATE: "date_str",
+            self.C_ACCOUNT: "account",
+            self.C_REF: "ref",
+            self.C_DESC: "description",
+            self.C_CAT: "category",
+            self.C_MEMO: "memo",
+        }[column]
+        return [getattr(t, attr) for t in self.rows]
+
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
 
@@ -212,7 +253,7 @@ class RegisterModel(QAbstractTableModel):
                 return FUTURE_COLOR
         if role == Qt.TextAlignmentRole and c in (self.C_AMOUNT, self.C_BAL):
             return int(Qt.AlignRight | Qt.AlignVCenter)
-        if role == Qt.TextAlignmentRole and c == self.C_CLR:
+        if role == Qt.TextAlignmentRole and c in (self.C_DATE, self.C_CLR):
             return int(Qt.AlignCenter)
         if role == Qt.ToolTipRole and t.is_split:
             return "Split transaction (CountAbout export does not include split details)"

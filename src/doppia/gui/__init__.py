@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSplitter,
+    QStyle,
     QTableView,
     QToolButton,
     QTreeWidget,
@@ -37,9 +38,11 @@ from .models import (
     PaddedDelegate,
     RegisterFilter,
     RegisterModel,
+    fit_widths,
     keep_colors_when_selected,
     money,
     money_color,
+    untruncated_width,
 )
 
 ALL_ACCOUNTS = "All accounts"
@@ -104,6 +107,9 @@ class MainWindow(QMainWindow):
         # Header clicks sort; clicking the same header again reverses the order.
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(RegisterModel.C_DATE, Qt.DescendingOrder)
+
+        self.columns_fitted = False
+        self.model.modelReset.connect(self.size_fixed_columns)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter (regular expression)…")
@@ -214,8 +220,16 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ font
 
-    # Register column widths in units of the font's average character width.
-    REGISTER_COL_CHARS = (13, 18, 8, 30, 23, 33, 13, 5, 14)
+    # Columns narrowed, in this order, when the register doesn't fit its pane.
+    SHRINK_ORDER = (RegisterModel.C_MEMO, RegisterModel.C_DESC, RegisterModel.C_CAT, RegisterModel.C_ACCOUNT)
+    # The rest always show their entries in full.
+    FIXED_COLUMNS = (
+        RegisterModel.C_DATE,
+        RegisterModel.C_REF,
+        RegisterModel.C_AMOUNT,
+        RegisterModel.C_CLR,
+        RegisterModel.C_BAL,
+    )
 
     def choose_font(self):
         ok, font = QFontDialog.getFont(QApplication.font(), self, "Font")
@@ -235,8 +249,8 @@ class MainWindow(QMainWindow):
         for b in self.txn_btns:
             b.setIconSize(QSize(fm.height(), fm.height()))
         self.view.verticalHeader().setDefaultSectionSize(fm.height() + 6)
-        for col, chars in enumerate(self.REGISTER_COL_CHARS):
-            self.view.setColumnWidth(col, chars * fm.averageCharWidth())
+        # The new font reaches widgets via events, so measure after they've been processed.
+        QTimer.singleShot(0, lambda: self.size_fixed_columns(grow_only=False))
         title_font = QFont(font)
         title_font.setBold(True)
         if font.pointSizeF() > 0:
@@ -248,6 +262,47 @@ class MainWindow(QMainWindow):
         self.refresh_accounts(reset_register=False)
         # The new font reaches widgets via events; measure after they've been processed.
         QTimer.singleShot(0, self.fit_account_list)
+
+    def measure_columns(self, columns):
+        """{column: (longest entry's width, width cutting off under 5% of entries)} in pixels."""
+        fm = self.view.fontMetrics()
+        # Cell margins, the grid line, and slack: drawn text can run wider than its metrics,
+        # and without room to spare Qt elides it.
+        margin = 2 * (self.view.style().pixelMetric(QStyle.PM_FocusFrameHMargin, None, self.view) + 1)
+        margin += 1 + fm.averageCharWidth()
+        header_font = QFont(self.view.font())
+        header_font.setBold(True)  # the sort column's header is bold
+        header_fm = QFontMetrics(header_font)
+        sizes = {}
+        measured = {}  # entries repeat heavily, and measuring text is the slow part
+        for col in columns:
+            texts = self.model.column_texts(col)
+            for s in texts:
+                if s and s not in measured:
+                    measured[s] = fm.horizontalAdvance(s)
+            widths = [measured[s] for s in texts if s]
+            header = header_fm.horizontalAdvance(RegisterModel.COLS[col]) + margin + 20  # 20: sort arrow
+            floor = max(untruncated_width(widths) + margin, header)
+            sizes[col] = (max(max(widths, default=0) + margin, header), floor)
+        return sizes
+
+    def fit_columns(self):
+        """Size all columns to their contents, narrowing SHRINK_ORDER to fit the pane.
+        Done once, when the first ledger loads."""
+        sizes = self.measure_columns(range(len(RegisterModel.COLS)))
+        widths = {c: w for c, (w, _) in sizes.items()}
+        floors = {c: f for c, (_, f) in sizes.items()}
+        available = (
+            self.view.width() - 2 * self.view.frameWidth() - self.view.verticalScrollBar().sizeHint().width()
+        )
+        for col, width in fit_widths(widths, floors, self.SHRINK_ORDER, available).items():
+            self.view.setColumnWidth(col, width)
+
+    def size_fixed_columns(self, grow_only=True):
+        """Keep every entry of the FIXED_COLUMNS visible. Normally they only grow, so that
+        ordinary edits and account switches don't make the columns jitter."""
+        for col, (width, _) in self.measure_columns(self.FIXED_COLUMNS).items():
+            self.view.setColumnWidth(col, max(width, self.view.columnWidth(col)) if grow_only else width)
 
     def fit_account_list(self):
         """Widen the account pane so names and balances fit (only on font change or file open,
@@ -277,6 +332,9 @@ class MainWindow(QMainWindow):
         self.account = None
         self.refresh_accounts()
         self.fit_account_list()
+        if not self.columns_fitted:
+            self.columns_fitted = True
+            QTimer.singleShot(0, self.fit_columns)  # after the window has its final layout
 
     def maybe_save(self):
         if self.ledger is None or not self.ledger.dirty:

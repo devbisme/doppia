@@ -68,6 +68,10 @@ with the dependencies it needs:
   - Ctrl/Shift-click in the account list to select several accounts; the register shows their
     combined transactions with a combined running balance. Reconcile and Rename account need
     a single account selected.
+  - Columns are sized once, when the first ledger loads: to their contents and, if they don't all
+    fit the pane, with Memo, then Description, Category, and Account narrowed as needed, each down
+    to the width that cuts off fewer than 5% of its entries. Those four then stay as they are (drag
+    them to change them). Date, Ref, Amount, Clr, and Balance widen when needed so they never truncate.
   - Click a column header to sort by it; click again to reverse. The sort column's header
     is highlighted, and the selection is kept when re-sorting. The register opens sorted by
     date, newest first. The Balance column is a date-order running balance, so it only
@@ -135,7 +139,7 @@ with the dependencies it needs:
 - View → Font… sets the font family, style (regular/italic/bold), and size for the whole
   app; the choice is remembered. View → Reset font returns to the system default.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
-- Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.1 s to switch accounts.
+- Handles a 10k+ row ledger quickly: about 0.6 s to start and 0.15 s to switch accounts.
 
 ## Limitations (from the CountAbout format)
 
