@@ -202,9 +202,12 @@ with the dependencies it needs:
   app; the choice is remembered. View → Reset font returns to the system default. After a
   font change, View → Resize columns to fit refits the columns.
 - The window's size and position are remembered between runs.
-- Right-click an account and choose **Deactivate** to move it to a **Deactivated accounts** list
-  at the bottom of the account pane; right-click it there and choose **Activate** to move it back.
-  "All accounts" and its totals cover only the active accounts, but a deactivated account can
+- Drag accounts in the account pane to reorder them. Each stays in its own list, primary or
+  secondary. The order is kept in doppia's settings for each ledger file; accounts added later
+  go at the end.
+- Right-click an account and choose **Make secondary** to move it to a **Secondary accounts** list
+  at the bottom of the account pane; right-click it there and choose **Make primary** to move it
+  back. "All accounts" and its totals cover only the primary accounts, but a secondary account can
   still be selected to see its transactions. The list is kept in doppia's settings for each
   ledger file, not in the CSV.
 - **File → New** (Ctrl+Shift+N) starts an empty ledger: add accounts with **Account → New
