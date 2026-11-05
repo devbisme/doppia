@@ -8,7 +8,7 @@ from collections import Counter
 from decimal import Decimal
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QKeySequence
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QKeySequence, QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -57,9 +57,10 @@ from .models import (
     untruncated_width,
 )
 
-ALL_ACCOUNTS = "All accounts"
+PRIMARY_ACCOUNTS = "Primary accounts"
 SECONDARY_COLOR = QBrush(QColor(120, 120, 120))
-ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "All accounts" row)
+ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "Primary accounts" row)
+DIVIDER_ROLE = Qt.UserRole + 1  # True on an account row with a divider line across its top
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
 
 
@@ -90,6 +91,15 @@ class AccountTree(QTreeWidget):
         if names:
             self.accounts_dropped.emit(names, below)
 
+    def drawRow(self, painter, option, index):
+        super().drawRow(painter, option, index)
+        if index.data(DIVIDER_ROLE):
+            painter.save()
+            painter.setPen(QPen(self.palette().color(QPalette.Text), 1))
+            r = option.rect
+            painter.drawLine(r.left(), r.top(), r.right(), r.top())
+            painter.restore()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, path=None):
@@ -99,6 +109,7 @@ class MainWindow(QMainWindow):
         self.balances = {}  # {account: (balance as of today, cleared balance)}
         self.accounts = []  # selected account names; empty means all primary accounts
         self.secondary = set()  # secondary account names, kept in the settings per ledger file
+        self.dividers = set()  # accounts with a divider line above them, also kept per ledger file
         self.account_order = []  # the account pane's order, also kept per ledger file; [] is A-Z
 
         # Account list: name, balance as of today, cleared balance.
@@ -433,6 +444,7 @@ class MainWindow(QMainWindow):
         self.ledger = ledger
         self.secondary = set(self.file_setting("secondary_accounts") or self.file_setting("inactive_accounts"))
         self.account_order = self.file_setting("account_order")
+        self.dividers = set(self.file_setting("account_dividers"))
         self.model.set_ledger(ledger)
         self.account = None
         self.refresh_accounts()
@@ -550,7 +562,7 @@ class MainWindow(QMainWindow):
         return [n for n in value if isinstance(n, str)] if isinstance(value, list) else []
 
     def store_file_settings(self):
-        """Save this ledger's secondary accounts and account order (a ledger without a file
+        """Save this ledger's secondary accounts, account order and dividers (a ledger without a file
         keeps them until Save As)."""
         key = self.ledger_key()
         if key is None:
@@ -559,6 +571,7 @@ class MainWindow(QMainWindow):
             ("secondary_accounts", sorted(self.secondary, key=str.lower)),
             ("inactive_accounts", []),  # older name for secondary_accounts
             ("account_order", self.account_order),
+            ("account_dividers", sorted(self.dividers, key=str.lower)),
         ):
             saved = self.settings_by_file(setting)
             saved.pop(key, None)
@@ -595,7 +608,14 @@ class MainWindow(QMainWindow):
             menu.addAction("Make primary", lambda: self.set_primary(name, True))
         else:
             menu.addAction("Make secondary", lambda: self.set_primary(name, False))
+        menu.addAction("Toggle divider", lambda: self.toggle_divider(name))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def toggle_divider(self, name):
+        """Draw or remove a line across the top of an account, to mark off a group of accounts."""
+        (self.dividers.discard if name in self.dividers else self.dividers.add)(name)
+        self.store_file_settings()
+        self.refresh_accounts()
 
     def set_primary(self, name, primary):
         """Move an account between the primary list and the secondary list below it."""
@@ -604,7 +624,7 @@ class MainWindow(QMainWindow):
         self.refresh_accounts()
 
     def show_accounts(self):
-        """Load the selected accounts into the register; "All accounts" means the primary ones."""
+        """Load the selected accounts into the register; "Primary accounts" means all of them."""
         self.update_totals()
         if self.accounts:
             self.model.set_account(self.accounts)
@@ -617,7 +637,7 @@ class MainWindow(QMainWindow):
         name = os.path.basename(self.ledger.path) if self.ledger and self.ledger.path else "(no file)"
         dirty = "*" if self.ledger and self.ledger.dirty else ""
         self.setWindowTitle(f"{dirty}{name} — doppia")
-        names = ", ".join(self.accounts) or ALL_ACCOUNTS
+        names = ", ".join(self.accounts) or PRIMARY_ACCOUNTS
         short = names if len(names) <= TITLE_MAX else names[: TITLE_MAX - 3] + "..."
         self.title.setText(short)
         self.title.setToolTip(names if short != names else "")
@@ -656,6 +676,7 @@ class MainWindow(QMainWindow):
             bal, clr = balances[name]
             item = QTreeWidgetItem([name, money(bal), money(clr)])
             item.setData(0, ACCOUNT_ROLE, name)
+            item.setData(0, DIVIDER_ROLE, name in self.dividers)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
             for c, v in ((1, bal), (2, clr)):
                 item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
@@ -667,7 +688,7 @@ class MainWindow(QMainWindow):
             return item
 
         names = self.ordered_accounts(balances)
-        item = QTreeWidgetItem([ALL_ACCOUNTS, "", ""])
+        item = QTreeWidgetItem([PRIMARY_ACCOUNTS, "", ""])
         f = item.font(0)
         f.setBold(True)
         item.setFont(0, f)
@@ -747,7 +768,7 @@ class MainWindow(QMainWindow):
         if not items:
             return
         names = {item.data(0, ACCOUNT_ROLE) for item in items}
-        # "All accounts" anywhere in the selection means all of them.
+        # "Primary accounts" anywhere in the selection means all primary accounts.
         if None in names:
             self.accounts = []
         else:
@@ -950,6 +971,9 @@ class MainWindow(QMainWindow):
         if self.account in self.secondary:
             self.secondary.discard(self.account)
             self.secondary.add(new.strip())
+        if self.account in self.dividers:
+            self.dividers.discard(self.account)
+            self.dividers.add(new.strip())
         self.account_order = [new.strip() if n == self.account else n for n in self.account_order]
         self.store_file_settings()
         self.account = new.strip()

@@ -93,8 +93,8 @@ with the dependencies it needs:
 ## Features
 
 - Account list with today's balance and cleared balance. The bold **Total** row sums both
-  columns over the selected accounts (all accounts when none or "All accounts" is selected).
-  Future-dated rows shown grey.
+  columns over the selected accounts (the primary accounts when none or "Primary accounts" is
+  selected). Future-dated rows shown grey.
 - Money is shown as `$1,234.56`: red for negative, green for positive, no minus sign
   (the minus is kept only in plain-text messages that can't be colored). Colors stay
   visible on selected rows. `$` and commas are accepted when typing amounts.
@@ -207,9 +207,12 @@ with the dependencies it needs:
   go at the end.
 - Right-click an account and choose **Make secondary** to move it to a **Secondary accounts** list
   at the bottom of the account pane; right-click it there and choose **Make primary** to move it
-  back. "All accounts" and its totals cover only the primary accounts, but a secondary account can
-  still be selected to see its transactions. The list is kept in doppia's settings for each
+  back. The "Primary accounts" row and its totals leave out secondary accounts, but a secondary
+  account can still be selected to see its transactions. The list is kept in doppia's settings for each
   ledger file, not in the CSV.
+- Right-click an account and choose **Toggle divider** to draw a line across its top, marking
+  off a group of accounts; choose it again to remove the line. Dividers are kept in doppia's
+  settings for each ledger file.
 - **File → New** (Ctrl+Shift+N) starts an empty ledger: add accounts with **Account → New
   account**, then transactions. Save asks for a file name the first time.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
