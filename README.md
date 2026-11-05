@@ -50,6 +50,18 @@ with the dependencies it needs:
     uv run doppia path/to/countabout-export.csv
     uv run --extra test pytest
 
+## What's new in 0.5.0
+
+- Right-click an account and choose **Make secondary** to move it to a **Secondary accounts** list
+  at the bottom of the account pane, or **Make primary** to move it back. The top row, now called
+  **Primary accounts** (formerly "All accounts"), and its totals leave out secondary accounts.
+- Drag accounts in the account pane to reorder them within their list.
+- Right-click an account and choose **Toggle divider** to draw a line across its top, marking off
+  a group of accounts.
+- The secondary list, account order and dividers are kept in doppia's settings for each ledger
+  file, not in the CSV.
+- **Help → About…** shows the version and a link to the GitHub page.
+
 ## What's new in 0.4.0
 
 - **File → New** (Ctrl+Shift+N) starts an empty ledger, so you can build one from scratch instead
@@ -202,6 +214,7 @@ with the dependencies it needs:
   app; the choice is remembered. View → Reset font returns to the system default. After a
   font change, View → Resize columns to fit refits the columns.
 - The window's size and position are remembered between runs.
+- **Help → About…** shows the version and a link to the GitHub page.
 - Drag accounts in the account pane to reorder them. Each stays in its own list, primary or
   secondary. The order is kept in doppia's settings for each ledger file; accounts added later
   go at the end.

@@ -1,6 +1,7 @@
 """Main window and entry point."""
 
 import datetime as dt
+import importlib.metadata
 import json
 import os
 import sys
@@ -61,6 +62,7 @@ PRIMARY_ACCOUNTS = "Primary accounts"
 SECONDARY_COLOR = QBrush(QColor(120, 120, 120))
 ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "Primary accounts" row)
 DIVIDER_ROLE = Qt.UserRole + 1  # True on an account row with a divider line across its top
+GITHUB_URL = "https://github.com/devbisme/doppia"
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
 
 
@@ -273,6 +275,25 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         act(m, "&Font…", self.choose_font)
         act(m, "&Reset font", self.reset_font)
+
+        m = self.menuBar().addMenu("&Help")
+        act(m, "&About…", self.about)
+
+    def about(self):
+        try:
+            version = importlib.metadata.version("doppia")
+        except importlib.metadata.PackageNotFoundError:
+            version = "unknown"
+        box = QMessageBox(self)
+        box.setWindowTitle("About doppia")
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<b>doppia</b> {version}<br><br>Personal accounting using CSV files.<br><br>"
+            f'<a href="{GITHUB_URL}">{GITHUB_URL}</a>'
+        )
+        for label in box.findChildren(QLabel):
+            label.setOpenExternalLinks(True)
+        box.exec()
 
     # ------------------------------------------------------------------ font
 
