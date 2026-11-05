@@ -8,7 +8,7 @@ from collections import Counter
 from decimal import Decimal
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -58,6 +58,8 @@ from .models import (
 )
 
 ALL_ACCOUNTS = "All accounts"
+INACTIVE_COLOR = QBrush(QColor(120, 120, 120))
+ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "All accounts" row)
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
 
 
@@ -67,7 +69,8 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("doppia", "doppia")
         self.ledger = None
         self.balances = {}  # {account: (balance as of today, cleared balance)}
-        self.accounts = []  # selected account names; empty means all accounts
+        self.accounts = []  # selected account names; empty means all active accounts
+        self.inactive = set()  # deactivated account names, kept in the settings per ledger file
 
         # Account list: name, balance as of today, cleared balance.
         self.tree = QTreeWidget()
@@ -79,6 +82,8 @@ class MainWindow(QMainWindow):
         # Ctrl/Shift-click selects several accounts; the register shows their combined transactions.
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self.account_selected)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.account_menu)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setStretchLastSection(False)
         for col in (1, 2):
@@ -396,6 +401,7 @@ class MainWindow(QMainWindow):
 
     def show_ledger(self, ledger):
         self.ledger = ledger
+        self.inactive = set(self.inactive_by_file().get(self.ledger_key(), []))
         self.model.set_ledger(ledger)
         self.account = None
         self.refresh_accounts()
@@ -452,7 +458,10 @@ class MainWindow(QMainWindow):
         if not path:
             return False
         self.ledger.path = path
-        return self.save()
+        if not self.save():
+            return False
+        self.store_inactive()  # under the new file name
+        return True
 
     def export_countabout(self):
         """Write a separate CSV in CountAbout's format; the open ledger is not changed."""
@@ -493,10 +502,57 @@ class MainWindow(QMainWindow):
     def account(self, name):
         self.accounts = [] if name is None else [name]
 
+    def ledger_key(self):
+        return os.path.abspath(self.ledger.path) if self.ledger and self.ledger.path else None
+
+    def inactive_by_file(self):
+        """{ledger file: deactivated account names}. Activity isn't part of the CountAbout
+        format, so it's kept in the settings rather than the CSV."""
+        try:
+            saved = json.loads(self.settings.value("inactive_accounts") or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return saved if isinstance(saved, dict) else {}
+
+    def store_inactive(self):
+        """Save the deactivated accounts (a ledger without a file keeps them until Save As)."""
+        key = self.ledger_key()
+        if key is None:
+            return
+        saved = self.inactive_by_file()
+        saved.pop(key, None)
+        if self.inactive:
+            saved[key] = sorted(self.inactive, key=str.lower)
+        self.settings.setValue("inactive_accounts", json.dumps(saved))
+
+    def active_accounts(self):
+        return [a for a in self.balances if a not in self.inactive]
+
+    def account_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        name = item.data(0, ACCOUNT_ROLE) if item is not None else None
+        if not name:
+            return
+        menu = QMenu(self)
+        if name in self.inactive:
+            menu.addAction("Activate", lambda: self.set_active(name, True))
+        else:
+            menu.addAction("Deactivate", lambda: self.set_active(name, False))
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def set_active(self, name, active):
+        """Move an account between the active list and the deactivated list below it."""
+        (self.inactive.discard if active else self.inactive.add)(name)
+        self.store_inactive()
+        self.refresh_accounts()
+
     def show_accounts(self):
-        """Load the selected accounts into the register."""
+        """Load the selected accounts into the register; "All accounts" means the active ones."""
         self.update_totals()
-        self.model.set_account(self.accounts or None)
+        if self.accounts:
+            self.model.set_account(self.accounts)
+        else:
+            self.model.set_account(self.active_accounts() if self.inactive & set(self.balances) else None)
         self.view.setColumnHidden(RegisterModel.C_ACCOUNT, self.account is not None)
         self.update_title()
 
@@ -538,22 +594,31 @@ class MainWindow(QMainWindow):
         balances = self.ledger.account_balances(as_of=dt.date.today()) if self.ledger else {}
         self.balances = balances
         sel = []
-        for name in [ALL_ACCOUNTS] + sorted(balances, key=str.lower):
-            if name == ALL_ACCOUNTS:
-                item = QTreeWidgetItem([name, "", ""])
-                f = item.font(0)
-                f.setBold(True)
-                item.setFont(0, f)
-            else:
-                bal, clr = balances[name]
-                item = QTreeWidgetItem([name, money(bal), money(clr)])
-                for c, v in ((1, bal), (2, clr)):
-                    item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
-                    if v:
-                        item.setForeground(c, money_color(v))
+
+        def add_account(name):
+            bal, clr = balances[name]
+            item = QTreeWidgetItem([name, money(bal), money(clr)])
+            item.setData(0, ACCOUNT_ROLE, name)
+            for c, v in ((1, bal), (2, clr)):
+                item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
+                if v:
+                    item.setForeground(c, money_color(v))
             self.tree.addTopLevelItem(item)
-            if name in (self.accounts or [ALL_ACCOUNTS]):
+            if name in self.accounts:
                 sel.append(item)
+            return item
+
+        names = sorted(balances, key=str.lower)
+        item = QTreeWidgetItem([ALL_ACCOUNTS, "", ""])
+        f = item.font(0)
+        f.setBold(True)
+        item.setFont(0, f)
+        self.tree.addTopLevelItem(item)
+        if not self.accounts:
+            sel.append(item)
+        for name in names:
+            if name not in self.inactive:
+                add_account(name)
         # Totals of the selected accounts; filled in by update_totals().
         self.total_item = QTreeWidgetItem(["Total", "", ""])
         self.total_item.setFlags(Qt.ItemIsEnabled)
@@ -564,6 +629,17 @@ class MainWindow(QMainWindow):
             if c:
                 self.total_item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
         self.tree.addTopLevelItem(self.total_item)
+        inactive = [n for n in names if n in self.inactive]
+        if inactive:
+            heading = QTreeWidgetItem(["Deactivated accounts", "", ""])
+            heading.setFlags(Qt.ItemIsEnabled)
+            f = heading.font(0)
+            f.setItalic(True)
+            heading.setFont(0, f)
+            heading.setForeground(0, INACTIVE_COLOR)
+            self.tree.addTopLevelItem(heading)
+            for name in inactive:
+                add_account(name).setForeground(0, INACTIVE_COLOR)
         if sel:
             self.tree.setCurrentItem(sel[0])
             for item in sel:
@@ -576,9 +652,9 @@ class MainWindow(QMainWindow):
             self.update_title()
 
     def update_totals(self):
-        """Sum the balance and cleared columns over the selected accounts (all if none)."""
+        """Sum the balance and cleared columns over the selected accounts (all active ones if none)."""
         zero = Decimal("0")
-        names = self.accounts or self.balances
+        names = self.accounts or self.active_accounts()
         bal = sum((self.balances[n][0] for n in names if n in self.balances), zero)
         clr = sum((self.balances[n][1] for n in names if n in self.balances), zero)
         for c, v in ((1, bal), (2, clr)):
@@ -604,11 +680,12 @@ class MainWindow(QMainWindow):
     def account_selected(self):
         if self.ledger is None:
             return
-        names = {item.text(0) for item in self.tree.selectedItems()}
-        if not names:
+        items = self.tree.selectedItems()
+        if not items:
             return
+        names = {item.data(0, ACCOUNT_ROLE) for item in items}
         # "All accounts" anywhere in the selection means all of them.
-        if ALL_ACCOUNTS in names:
+        if None in names:
             self.accounts = []
         else:
             self.accounts = [a for a in self.ledger.accounts() if a in names]
@@ -807,6 +884,10 @@ class MainWindow(QMainWindow):
         except ValueError as e:
             QMessageBox.warning(self, "Rename account", str(e))
             return
+        if self.account in self.inactive:
+            self.inactive.discard(self.account)
+            self.inactive.add(new.strip())
+            self.store_inactive()
         self.account = new.strip()
         self.changed()
 

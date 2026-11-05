@@ -202,6 +202,11 @@ with the dependencies it needs:
   app; the choice is remembered. View → Reset font returns to the system default. After a
   font change, View → Resize columns to fit refits the columns.
 - The window's size and position are remembered between runs.
+- Right-click an account and choose **Deactivate** to move it to a **Deactivated accounts** list
+  at the bottom of the account pane; right-click it there and choose **Activate** to move it back.
+  "All accounts" and its totals cover only the active accounts, but a deactivated account can
+  still be selected to see its transactions. The list is kept in doppia's settings for each
+  ledger file, not in the CSV.
 - **File → New** (Ctrl+Shift+N) starts an empty ledger: add accounts with **Account → New
   account**, then transactions. Save asks for a file name the first time.
 - Save (Ctrl+S) writes atomically and keeps the previous file as `<file>.bak`.
