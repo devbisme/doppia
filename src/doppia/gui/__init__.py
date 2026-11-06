@@ -64,6 +64,7 @@ PRIMARY_HEADING_BG = QBrush(QColor(225, 237, 252))  # pale blue, lighter than th
 SECONDARY_HEADING_BG = QBrush(QColor(255, 222, 185))  # light orange behind the "Secondary accounts" row
 ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "Primary accounts" row)
 DIVIDER_ROLE = Qt.UserRole + 1  # True on an account row with a divider line across its top
+TOTAL_ROLE = Qt.UserRole + 2  # True on the Total row, which gets a double line across its top
 GITHUB_URL = "https://github.com/devbisme/doppia"
 TITLE_MAX = 30  # longest account list shown over the register, including the "..."
 
@@ -97,11 +98,13 @@ class AccountTree(QTreeWidget):
 
     def drawRow(self, painter, option, index):
         super().drawRow(painter, option, index)
-        if index.data(DIVIDER_ROLE):
+        tops = (0,) if index.data(DIVIDER_ROLE) else (0, 2) if index.data(TOTAL_ROLE) else ()
+        if tops:
             painter.save()
             painter.setPen(QPen(self.palette().color(QPalette.Text), 1))
             r = option.rect
-            painter.drawLine(r.left(), r.top(), r.right(), r.top())
+            for dy in tops:
+                painter.drawLine(r.left(), r.top() + dy, r.right(), r.top() + dy)
             painter.restore()
 
 
@@ -727,12 +730,14 @@ class MainWindow(QMainWindow):
         # Totals of the selected accounts; filled in by update_totals().
         self.total_item = QTreeWidgetItem(["Total", "", ""])
         self.total_item.setFlags(Qt.ItemIsEnabled)
+        self.total_item.setData(0, TOTAL_ROLE, True)
         for c in range(3):
             f = self.total_item.font(c)
             f.setBold(True)
             self.total_item.setFont(c, f)
-            if c:
-                self.total_item.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
+            # Text at the bottom of a taller row, clear of the double line across the top.
+            self.total_item.setTextAlignment(c, (Qt.AlignRight if c else Qt.AlignLeft) | Qt.AlignBottom)
+        self.total_item.setSizeHint(0, QSize(0, QFontMetrics(f).height() + 7))
         self.tree.addTopLevelItem(self.total_item)
         secondary = [n for n in names if n in self.secondary]
         if secondary:
