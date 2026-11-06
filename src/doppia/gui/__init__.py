@@ -60,6 +60,8 @@ from .models import (
 
 PRIMARY_ACCOUNTS = "Primary accounts"
 SECONDARY_COLOR = QBrush(QColor(120, 120, 120))
+PRIMARY_HEADING_BG = QBrush(QColor(225, 237, 252))  # pale blue, lighter than the selection color
+SECONDARY_HEADING_BG = QBrush(QColor(255, 222, 185))  # light orange behind the "Secondary accounts" row
 ACCOUNT_ROLE = Qt.UserRole  # an account row's account name (None on the "Primary accounts" row)
 DIVIDER_ROLE = Qt.UserRole + 1  # True on an account row with a divider line across its top
 GITHUB_URL = "https://github.com/devbisme/doppia"
@@ -710,6 +712,8 @@ class MainWindow(QMainWindow):
 
         names = self.ordered_accounts(balances)
         item = QTreeWidgetItem([PRIMARY_ACCOUNTS, "", ""])
+        for c in range(3):
+            item.setBackground(c, PRIMARY_HEADING_BG)
         f = item.font(0)
         f.setBold(True)
         item.setFont(0, f)
@@ -742,6 +746,8 @@ class MainWindow(QMainWindow):
             f.setItalic(True)
             heading.setFont(0, f)
             heading.setForeground(0, SECONDARY_COLOR)
+            for c in range(3):
+                heading.setBackground(c, SECONDARY_HEADING_BG)
             self.tree.addTopLevelItem(heading)
             for name in secondary:
                 add_account(name).setForeground(0, SECONDARY_COLOR)
